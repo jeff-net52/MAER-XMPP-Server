@@ -10,6 +10,18 @@ hosts:
   - contacts.chaumont.me
   - chat.customer.example
 
+### Ce fragment définit une politique MUC privée : seuls les comptes locaux
+### provisionnés peuvent accéder aux salons, les créer ou les rendre
+### persistants. Adaptez cette règle explicitement si le contrat autorise des
+### participants fédérés.
+acl:
+  maer_local_accounts:
+    user_regexp: ""
+
+access_rules:
+  maer_private_muc:
+    allow: maer_local_accounts
+
 ### Les comptes payants sont provisionnés côté service. Ne pas activer
 ### mod_register pour l’inscription publique.
 host_config:
@@ -44,9 +56,18 @@ modules:
     db_type: sql
     hosts:
       - conference.@HOST@
+    access: maer_private_muc
+    access_create: maer_private_muc
+    access_persistent: maer_private_muc
+    access_mam: maer_private_muc
+    access_register: maer_private_muc
     default_room_options:
+      allow_user_invites: false
       mam: true
+      members_only: true
       persistent: true
+      public: false
+      public_list: false
   mod_muc_admin: {}
   mod_offline:
     db_type: sql
@@ -75,3 +96,15 @@ modules:
 ### mod_push n’est ajouté qu’après déploiement d’un relais XEP-0357 MAER
 ### contrôlé et testé. Les services STUN/TURN sont annoncés séparément après
 ### validation des secrets éphémères et des DNS/certificats de chaque tenant.
+
+### Le chemin /upload doit aussi être relié à mod_http_upload dans un listener
+### HTTPS ejabberd, ou dans le proxy HTTPS placé devant celui-ci. Exemple à
+### fusionner dans le listener existant (ne pas remplacer les listeners c2s) :
+###
+### listen:
+###   - port: 5443
+###     ip: "::"
+###     module: ejabberd_http
+###     tls: true
+###     request_handlers:
+###       /upload: mod_http_upload

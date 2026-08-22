@@ -16,6 +16,11 @@ sont conservés. Les fichiers modifiés ou ajoutés dans cette distribution
 restent soumis à la GPLv2 applicable au serveur. Le code de l’édition
 commerciale ejabberd Business Edition n’est pas inclus.
 
+Lorsque l’en-tête d’un fichier amont accorde la GPL version 2 **ou toute version
+ultérieure**, cette permission demeure intacte. Les conditions exactes de
+chaque fichier restent celles de son en-tête et de `COPYING` ; la présente
+notice ne les réduit pas.
+
 Le nom « MAER XMPP Server » désigne cette distribution et le service opéré.
 Les noms techniques `ejabberd`, `ejabberdctl`, les modules Erlang et les
 protocoles XMPP ne sont pas renommés. ProcessOne ne produit ni ne cautionne ce
@@ -24,3 +29,7 @@ fork.
 La facturation d’un compte, de l’hébergement, de l’administration et du support
 MAER est distincte des permissions de la GPL. Toute distribution binaire doit
 fournir l’accès au code source correspondant conformément à `COPYING`.
+
+Le fichier `maer/assets/maer-mark.png` est le symbole graphique fourni pour
+l’identité MAER. Son statut de marque est décrit dans `TRADEMARKS-MAER.md` et
+ne modifie pas les droits accordés sur le code serveur.

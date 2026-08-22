@@ -41,6 +41,12 @@ restent partagés. De plus, deux domaines locaux peuvent communiquer si aucune
 politique supplémentaire ne l’interdit. Ne pas vendre cette variante comme une
 instance physiquement dédiée.
 
+Le modèle limite l’accès, la création, la persistance et les archives MUC aux
+comptes locaux provisionnés. Les nouveaux salons sont non publics, non listés
+et réservés à leurs membres. Autoriser la fédération ou les invitations par les
+utilisateurs doit être une décision explicite liée au contrat, suivie de tests
+d’isolation entre organisations.
+
 ### Offre dédiée — recommandée pour une messagerie privée clé en main
 
 Déployer une instance (ou un conteneur) MAER XMPP Server par organisation, avec

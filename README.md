@@ -21,6 +21,7 @@ operations documentation without renaming the technical `ejabberd` runtime,
 CLI or modules.
 
 - [MAER distribution overview](maer/README.md)
+- [Maer Chat Android client](https://github.com/jeff-net52/MaerChat)
 - [Multi-organization architecture](maer/docs/MULTI_ORGANIZATION.md)
 - [License and provenance](MAER-NOTICE.md)
 - [Upstream synchronization policy](UPSTREAM-MAER.md)
