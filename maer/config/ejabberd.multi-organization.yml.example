@@ -1,0 +1,77 @@
+###
+### MAER XMPP Server — fragment multi-organisation ejabberd
+###
+### Ce fichier est un modèle public, pas une configuration autonome.
+### Aucun mot de passe, jeton, certificat privé ou identifiant d’administration
+### ne doit être ajouté au dépôt. Les valeurs *.example doivent être remplacées.
+###
+
+hosts:
+  - contacts.chaumont.me
+  - chat.customer.example
+
+### Les comptes payants sont provisionnés côté service. Ne pas activer
+### mod_register pour l’inscription publique.
+host_config:
+  contacts.chaumont.me:
+    auth_method: sql
+    default_db: sql
+  chat.customer.example:
+    auth_method: sql
+    default_db: sql
+
+### Avec le schéma SQL multi-hôte ejabberd 26.07, les tables fonctionnelles
+### sont partitionnées logiquement par server_host. Les paramètres et secrets
+### SQL restent dans le gestionnaire de secrets de l’environnement, hors Git.
+sql_schema_multihost: true
+
+### Les modules globaux sont instanciés pour chacun des virtual hosts. Les
+### composants utilisant @HOST@ reçoivent donc un domaine propre au tenant.
+modules:
+  mod_avatar: {}
+  mod_blocking: {}
+  mod_caps: {}
+  mod_carboncopy: {}
+  mod_client_state: {}
+  mod_disco: {}
+  mod_http_upload:
+    put_url: https://@HOST@/upload
+  mod_mam:
+    db_type: sql
+    assume_mam_usage: true
+    default: always
+  mod_muc:
+    db_type: sql
+    hosts:
+      - conference.@HOST@
+    default_room_options:
+      mam: true
+      persistent: true
+  mod_muc_admin: {}
+  mod_offline:
+    db_type: sql
+  mod_ping: {}
+  mod_privacy:
+    db_type: sql
+  mod_private:
+    db_type: sql
+  mod_pubsub:
+    db_type: sql
+    plugins:
+      - flat
+      - pep
+    force_node_config:
+      storage:bookmarks:
+        access_model: whitelist
+  mod_roster:
+    db_type: sql
+    versioning: true
+  mod_stream_mgmt:
+    resend_on_timeout: if_offline
+  mod_vcard:
+    db_type: sql
+  mod_vcard_xupdate: {}
+
+### mod_push n’est ajouté qu’après déploiement d’un relais XEP-0357 MAER
+### contrôlé et testé. Les services STUN/TURN sont annoncés séparément après
+### validation des secrets éphémères et des DNS/certificats de chaque tenant.

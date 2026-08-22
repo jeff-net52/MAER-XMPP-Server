@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Catalogue public des organisations Maer Chat",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "organizations"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "organizations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/organization"
+      },
+      "contains": {
+        "type": "object",
+        "required": ["default"],
+        "properties": {
+          "default": {
+            "const": true
+          }
+        }
+      },
+      "minContains": 1,
+      "maxContains": 1
+    }
+  },
+  "$defs": {
+    "organization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "display_name", "xmpp_domain", "default"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62})$"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "xmpp_domain": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "default": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

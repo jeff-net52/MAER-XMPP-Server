@@ -1,4 +1,39 @@
 
+<!--
+  Modified on 2026-08-22 for the MAER XMPP Server distribution.
+  The upstream ejabberd documentation and attribution are preserved below.
+-->
+
+<p align="center">
+    <img src="maer/assets/maer-mark.png" width="128" alt="MAER">
+</p>
+
+<h1 align="center">MAER XMPP Server</h1>
+
+<p align="center">
+    Private multi-organization messaging — based on ejabberd Community Server
+</p>
+
+MAER XMPP Server is the MAER Engineering distribution and operational layer
+for ejabberd. This branch is based on the stable upstream tag **26.07**. It
+adds public organization metadata, multi-tenant deployment templates and MAER
+operations documentation without renaming the technical `ejabberd` runtime,
+CLI or modules.
+
+- [MAER distribution overview](maer/README.md)
+- [Multi-organization architecture](maer/docs/MULTI_ORGANIZATION.md)
+- [License and provenance](MAER-NOTICE.md)
+- [Upstream synchronization policy](UPSTREAM-MAER.md)
+
+The source remains under the GNU GPL v2 terms and OpenSSL linking exception in
+[`COPYING`](COPYING). A paid MAER account pays for the hosted service and
+support; it does not restrict the GPL rights in the server source. This fork is
+not produced or endorsed by ProcessOne.
+
+---
+
+## Upstream ejabberd documentation
+
 <p align="center">
     <img src="https://www.process-one.net/wp-content/uploads/2022/05/ejabberd-logo-rounded-index.png">
 </p>
