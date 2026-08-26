@@ -81,10 +81,10 @@ Pour le client Windows, valider également les endpoints publics
 documents XEP-0156 sous `/.well-known/host-meta`. Le listener ou le reverse
 proxy doit présenter un certificat valide couvrant `xmpp.maer.fr`.
 
-## Migration depuis un ancien domaine
+## Changement de domaine XMPP
 
 Remplacer un virtual host n’est pas un alias ni un renommage automatique.
-`utilisateur@contacts.chaumont.me` et `utilisateur@xmpp.maer.fr` sont deux
+`utilisateur@ancien-domaine.example` et `utilisateur@xmpp.maer.fr` sont deux
 identités XMPP distinctes. Avant de retirer un ancien host, sauvegarder la base
 et décider explicitement si les comptes sont reprovisionnés ou si toutes les
 données indexées par `server_host` sont migrées : roster, archives MAM,
