@@ -45,5 +45,7 @@ déployée, sauvegarder la configuration et la base, puis tester avec des compte
 dédiés. Le HEAD de développement n’est pas une version de production.
 
 Le modèle rend les salons privés et réservés aux comptes locaux par défaut. Le
-handler `/upload` doit être ajouté au listener HTTPS ejabberd, ou relayé par le
-proxy HTTPS, sans remplacer les listeners client existants.
+listener HTTPS ejabberd, ou le proxy placé devant celui-ci, doit relier
+`/http-bind`, `/xmpp-websocket`, les documents `/.well-known/host-meta` et
+`/upload` aux handlers indiqués dans le modèle, sans remplacer les listeners
+client XMPP existants.

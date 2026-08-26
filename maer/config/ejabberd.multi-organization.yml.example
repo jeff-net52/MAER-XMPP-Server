@@ -7,7 +7,7 @@
 ###
 
 hosts:
-  - contacts.chaumont.me
+  - xmpp.maer.fr
   - chat.customer.example
 
 ### Ce fragment définit une politique MUC privée : seuls les comptes locaux
@@ -25,7 +25,7 @@ access_rules:
 ### Les comptes payants sont provisionnés côté service. Ne pas activer
 ### mod_register pour l’inscription publique.
 host_config:
-  contacts.chaumont.me:
+  xmpp.maer.fr:
     auth_method: sql
     default_db: sql
   chat.customer.example:
@@ -42,12 +42,16 @@ sql_schema_multihost: true
 modules:
   mod_avatar: {}
   mod_blocking: {}
+  mod_bosh: {}
   mod_caps: {}
   mod_carboncopy: {}
   mod_client_state: {}
   mod_disco: {}
   mod_http_upload:
     put_url: https://@HOST@/upload
+  mod_host_meta:
+    bosh_service_url: https://@HOST@/http-bind
+    websocket_url: wss://@HOST@/xmpp-websocket
   mod_mam:
     db_type: sql
     assume_mam_usage: true
@@ -97,9 +101,9 @@ modules:
 ### contrôlé et testé. Les services STUN/TURN sont annoncés séparément après
 ### validation des secrets éphémères et des DNS/certificats de chaque tenant.
 
-### Le chemin /upload doit aussi être relié à mod_http_upload dans un listener
-### HTTPS ejabberd, ou dans le proxy HTTPS placé devant celui-ci. Exemple à
-### fusionner dans le listener existant (ne pas remplacer les listeners c2s) :
+### Ces chemins doivent aussi être reliés aux handlers dans un listener HTTPS
+### ejabberd, ou dans le proxy HTTPS placé devant celui-ci. Exemple à fusionner
+### dans le listener existant (ne pas remplacer les listeners c2s) :
 ###
 ### listen:
 ###   - port: 5443
@@ -107,4 +111,8 @@ modules:
 ###     module: ejabberd_http
 ###     tls: true
 ###     request_handlers:
+###       /http-bind: mod_bosh
+###       /xmpp-websocket: ejabberd_http_ws
+###       /.well-known/host-meta: mod_host_meta
+###       /.well-known/host-meta.json: mod_host_meta
 ###       /upload: mod_http_upload

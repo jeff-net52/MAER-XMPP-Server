@@ -1,5 +1,13 @@
 # Changements MAER
 
+## Non publié
+
+- remplacement du domaine historique par le domaine canonique
+  `xmpp.maer.fr` dans le catalogue et le modèle multi-organisation ;
+- ajout au modèle des modules BOSH et XEP-0156, avec les chemins publics
+  `/http-bind`, `/xmpp-websocket` et `/.well-known/host-meta` attendus par le
+  client Windows.
+
 ## 0.1.0 — 22 août 2026 — base ejabberd 26.07
 
 - ajout de l’identité de distribution « MAER XMPP Server — basé sur ejabberd

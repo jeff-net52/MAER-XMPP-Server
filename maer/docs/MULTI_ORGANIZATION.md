@@ -12,7 +12,7 @@ Une organisation possède quatre métadonnées publiques :
 | `default` | choix initial d’une installation neuve |
 
 Exemple : le choix « MAER Engineering » produit
-`utilisateur@contacts.chaumont.me`. Le mot de passe n’est jamais placé dans le
+`utilisateur@xmpp.maer.fr`. Le mot de passe n’est jamais placé dans le
 catalogue et n’est envoyé qu’au virtual host sélectionné, après validation TLS
 du domaine.
 
@@ -75,6 +75,27 @@ une localisation spécifique des données ou une rétention propre au client.
    Management, OMEMO multi-appareil, upload, salons MUC, blocage et sauvegarde.
 9. Publier la nouvelle application ou le catalogue signé, puis surveiller le
    service avant l’ouverture commerciale.
+
+Pour le client Windows, valider également les endpoints publics
+`wss://xmpp.maer.fr/xmpp-websocket`, `https://xmpp.maer.fr/http-bind` et les
+documents XEP-0156 sous `/.well-known/host-meta`. Le listener ou le reverse
+proxy doit présenter un certificat valide couvrant `xmpp.maer.fr`.
+
+## Migration depuis un ancien domaine
+
+Remplacer un virtual host n’est pas un alias ni un renommage automatique.
+`utilisateur@contacts.chaumont.me` et `utilisateur@xmpp.maer.fr` sont deux
+identités XMPP distinctes. Avant de retirer un ancien host, sauvegarder la base
+et décider explicitement si les comptes sont reprovisionnés ou si toutes les
+données indexées par `server_host` sont migrées : roster, archives MAM,
+messages hors ligne, salons, PubSub/PEP, clés et appareils OMEMO, vCard, jetons
+et sessions. Une coexistence temporaire des deux hosts ne fusionne pas ces
+données.
+
+Valider la procédure sur une copie de préproduction, avec comptes dédiés et
+rollback testé. Informer les utilisateurs de toute nouvelle identité et ne
+supprimer l’ancien host qu’après contrôle des données, des clients et de la
+durée de conservation prévue.
 
 ## Retrait ou suspension
 
