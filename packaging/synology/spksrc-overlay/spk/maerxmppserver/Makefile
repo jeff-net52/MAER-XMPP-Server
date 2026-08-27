@@ -5,7 +5,7 @@
 SPK_NAME = maerxmppserver
 GROUP = sc-maerxmppserver
 SPK_VERS = 26.07.0
-SPK_REV = 8
+SPK_REV = 9
 SPK_ICON = src/maerxmppserver.png
 
 DEPENDS = cross/maerxmppserver
@@ -26,7 +26,7 @@ override DISTRIBUTOR = MAER
 override DISTRIBUTOR_URL = https://github.com/jeff-net52/MAER-XMPP-Server
 DESCRIPTION = Private XMPP messaging server for MAER Chat.
 DISPLAY_NAME = MAER XMPP Server
-CHANGELOG = "Clean-install-only hardened profile with strict proxy trust, upload quotas, and reproducible archives."
+CHANGELOG = "MAER account portal, branded WebAdmin fix, desktop origin support, LAN fail2ban correction, and validated revision-8 migration."
 
 HOMEPAGE = https://github.com/jeff-net52/MAER-XMPP-Server
 HELPURL = https://github.com/jeff-net52/MAER-XMPP-Server/tree/maer/server-v1/packaging/synology

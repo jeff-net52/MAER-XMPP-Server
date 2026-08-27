@@ -183,8 +183,38 @@ mkdir -p "${clean_install_var}"
 (
     . "${SOURCE_SETUP}"
     MAER_VAR_DIR="${clean_install_var}"
+    CONFIG_DIR="${clean_install_var}/config"
+    wizard_smtp_password='TestOnly-Clean-Smtp-42'
     validate_preinst
 ) || fail_test 'empty package data directory was rejected'
+
+missing_secret_var="${TEST_ROOT}/missing-secret-var"
+mkdir -p "${missing_secret_var}"
+if (
+    . "${SOURCE_SETUP}"
+    MAER_VAR_DIR="${missing_secret_var}"
+    CONFIG_DIR="${missing_secret_var}/config"
+    unset wizard_smtp_password || true
+    validate_preinst
+) >"${TEST_ROOT}/missing-secret.out" 2>&1
+then
+    fail_test 'clean installation accepted a missing SMTP password'
+fi
+grep -q 'portal SMTP password is required' "${TEST_ROOT}/missing-secret.out" || fail_test 'missing SMTP password refusal is not explicit'
+
+short_secret_var="${TEST_ROOT}/short-secret-var"
+mkdir -p "${short_secret_var}"
+if (
+    . "${SOURCE_SETUP}"
+    MAER_VAR_DIR="${short_secret_var}"
+    CONFIG_DIR="${short_secret_var}/config"
+    wizard_smtp_password='too-short'
+    validate_preinst
+) >"${TEST_ROOT}/short-secret.out" 2>&1
+then
+    fail_test 'clean installation accepted a short SMTP password'
+fi
+grep -q 'SMTP password is too short' "${TEST_ROOT}/short-secret.out" || fail_test 'short SMTP password refusal is not explicit'
 
 mkdir -p "${clean_install_var}/config"
 printf '%s\n' 'legacy profile fixture' > "${clean_install_var}/config/ejabberd.yml"
@@ -198,13 +228,91 @@ then
 fi
 grep -q 'requires an empty package data directory' "${TEST_ROOT}/retained-data.out" || fail_test 'retained-data refusal is not explicit'
 
+upgrade_var="${TEST_ROOT}/upgrade-var"
+upgrade_defaults="${TEST_ROOT}/upgrade-defaults"
+mkdir -p "${upgrade_var}/config" "${upgrade_var}/data" "${upgrade_var}/log" \
+    "${upgrade_var}/run" "${upgrade_var}/upload" "${upgrade_var}/certs" \
+    "${upgrade_defaults}"
+printf '%s\n' 'revision-8-profile' > "${upgrade_var}/config/ejabberd.yml"
+printf '%s\n' 'revision-8-control' > "${upgrade_var}/config/ejabberdctl.cfg"
+printf '%s\n' 'revision-8-inet' > "${upgrade_var}/config/inetrc"
+printf '%s\n' 'account-database-marker' > "${upgrade_var}/data/ejabberd.sqlite"
+printf '%s\n' 'revision-9-profile' > "${upgrade_defaults}/ejabberd.yml"
+printf '%s\n' 'revision-9-control' > "${upgrade_defaults}/ejabberdctl.cfg"
+printf '%s\n' 'revision-9-inet' > "${upgrade_defaults}/inetrc"
+
+(
+    . "${SOURCE_SETUP}"
+    SYNOPKG_OLD_PKGVER=26.07.0-8
+    MAER_VAR_DIR="${upgrade_var}"
+    MAER_DEFAULTS_DIR="${upgrade_defaults}"
+    CONFIG_DIR="${upgrade_var}/config"
+    LOGS_DIR="${upgrade_var}/log"
+    SPOOL_DIR="${upgrade_var}/data"
+    wizard_smtp_password='TestOnly-Smtp-Secret-42'
+    export SYNOPKG_OLD_PKGVER MAER_VAR_DIR MAER_DEFAULTS_DIR CONFIG_DIR LOGS_DIR SPOOL_DIR wizard_smtp_password
+    validate_preupgrade
+    service_postupgrade
+) >"${TEST_ROOT}/upgrade.out" 2>&1 || {
+    sed 's/^/upgrade output: /' "${TEST_ROOT}/upgrade.out" >&2
+    fail_test 'validated revision-8 upgrade failed'
+}
+
+grep -q '^revision-9-profile$' "${upgrade_var}/config/ejabberd.yml" || fail_test 'upgrade profile was not refreshed'
+grep -q '^revision-8-profile$' "${upgrade_var}/config/ejabberd.yml.pre-26.07.0-9" || fail_test 'revision-8 profile backup is missing'
+grep -q '^revision-9-control$' "${upgrade_var}/config/ejabberdctl.cfg" || fail_test 'control defaults were not refreshed'
+grep -q '^revision-9-inet$' "${upgrade_var}/config/inetrc" || fail_test 'inet defaults were not refreshed'
+grep -q '^account-database-marker$' "${upgrade_var}/data/ejabberd.sqlite" || fail_test 'account database changed during upgrade'
+[ "$(stat -c '%a' "${upgrade_var}/config/ejabberd.yml")" = '600' ] || fail_test 'upgraded profile permissions are not 0600'
+grep -q '^TestOnly-Smtp-Secret-42$' "${upgrade_var}/config/smtp-password" || fail_test 'SMTP password was not installed'
+[ "$(stat -c '%a' "${upgrade_var}/config/smtp-password")" = '600' ] || fail_test 'SMTP password permissions are not 0600'
+if grep -q 'TestOnly-Smtp-Secret-42' "${TEST_ROOT}/upgrade.out"; then
+    fail_test 'SMTP password leaked into upgrade output'
+fi
+
+existing_secret_var="${TEST_ROOT}/existing-secret-var"
+mkdir -p "${existing_secret_var}/config"
+printf '%s\n' 'Existing-Smtp-Secret-42' > "${existing_secret_var}/config/smtp-password"
+chmod 644 "${existing_secret_var}/config/smtp-password"
+(
+    . "${SOURCE_SETUP}"
+    CONFIG_DIR="${existing_secret_var}/config"
+    unset wizard_smtp_password || true
+    install_smtp_password
+) || fail_test 'existing SMTP secret was not preserved'
+grep -q '^Existing-Smtp-Secret-42$' "${existing_secret_var}/config/smtp-password" || fail_test 'existing SMTP secret changed'
+[ "$(stat -c '%a' "${existing_secret_var}/config/smtp-password")" = '600' ] || fail_test 'existing SMTP secret mode was not corrected to 0600'
+
+unsafe_upgrade_var="${TEST_ROOT}/unsafe-upgrade-var"
+mkdir -p "${unsafe_upgrade_var}/config" "${unsafe_upgrade_var}/data"
+printf '%s\n' 'profile' > "${unsafe_upgrade_var}/config/ejabberd.yml"
+printf '%s\n' 'control' > "${unsafe_upgrade_var}/config/ejabberdctl.cfg"
+mkdir "${unsafe_upgrade_var}/config/inetrc"
 if (
     . "${SOURCE_SETUP}"
+    SYNOPKG_OLD_PKGVER=26.07.0-8
+    MAER_VAR_DIR="${unsafe_upgrade_var}"
+    CONFIG_DIR="${unsafe_upgrade_var}/config"
+    wizard_smtp_password='TestOnly-Unsafe-Smtp-42'
+    export SYNOPKG_OLD_PKGVER MAER_VAR_DIR CONFIG_DIR wizard_smtp_password
     validate_preupgrade
-) >"${TEST_ROOT}/upgrade.out" 2>&1
+) >"${TEST_ROOT}/unsafe-upgrade.out" 2>&1
 then
-    fail_test 'in-place upgrade was accepted'
+    fail_test 'unsafe installed configuration was accepted'
 fi
-grep -q 'In-place upgrades.*intentionally refused' "${TEST_ROOT}/upgrade.out" || fail_test 'upgrade refusal is not explicit'
+grep -q 'configuration is missing or unsafe' "${TEST_ROOT}/unsafe-upgrade.out" || fail_test 'unsafe configuration refusal is not explicit'
+
+if (
+    . "${SOURCE_SETUP}"
+    SYNOPKG_OLD_PKGVER=26.07.0-7
+    MAER_VAR_DIR="${upgrade_var}"
+    CONFIG_DIR="${upgrade_var}/config"
+    export SYNOPKG_OLD_PKGVER MAER_VAR_DIR CONFIG_DIR
+    validate_preupgrade
+) >"${TEST_ROOT}/unsupported-upgrade.out" 2>&1
+then
+    fail_test 'unsupported source revision was accepted'
+fi
+grep -q 'only supports an in-place upgrade from 26.07.0-8' "${TEST_ROOT}/unsupported-upgrade.out" || fail_test 'unsupported-upgrade refusal is not explicit'
 
 echo 'service contract tests passed'

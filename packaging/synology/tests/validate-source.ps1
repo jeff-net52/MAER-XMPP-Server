@@ -113,8 +113,12 @@ function Validate-BuiltSpk {
 
         $infoPath = Join-Path $temporaryRoot 'INFO'
         $privilegePath = Join-Path $temporaryRoot 'conf\privilege'
+        $installWizardPath = Join-Path $temporaryRoot 'WIZARD_UIFILES\install_uifile'
+        $upgradeWizardPath = Join-Path $temporaryRoot 'WIZARD_UIFILES\upgrade_uifile'
         Assert-True (Test-Path -LiteralPath $infoPath -PathType Leaf) 'Built SPK has no INFO file.'
         Assert-True (Test-Path -LiteralPath $privilegePath -PathType Leaf) 'Built SPK has no conf/privilege file.'
+        Assert-True (Test-Path -LiteralPath $installWizardPath -PathType Leaf) 'Built SPK has no SMTP install wizard.'
+        Assert-True (Test-Path -LiteralPath $upgradeWizardPath -PathType Leaf) 'Built SPK has no SMTP upgrade wizard.'
 
         if (Test-Path -LiteralPath $infoPath -PathType Leaf) {
             $info = Read-InfoFile $infoPath
@@ -150,12 +154,18 @@ function Validate-BuiltSpk {
             $startStopLine = $listing | Where-Object { $_ -match '(?:^|\s)(?:\./)?scripts/start-stop-status$' } | Select-Object -First 1
             $setupLine = $listing | Where-Object { $_ -match '(?:^|\s)(?:\./)?scripts/service-setup$' } | Select-Object -First 1
             $privilegeLine = $listing | Where-Object { $_ -match '(?:^|\s)(?:\./)?conf/privilege$' } | Select-Object -First 1
+            $installWizardLine = $listing | Where-Object { $_ -match '(?:^|\s)(?:\./)?WIZARD_UIFILES/install_uifile$' } | Select-Object -First 1
+            $upgradeWizardLine = $listing | Where-Object { $_ -match '(?:^|\s)(?:\./)?WIZARD_UIFILES/upgrade_uifile$' } | Select-Object -First 1
             Assert-True ([bool]$startStopLine) 'SPK listing has no start-stop-status script.'
             Assert-True ([bool]$setupLine) 'SPK listing has no service-setup script.'
             Assert-True ([bool]$privilegeLine) 'SPK listing has no privilege file.'
+            Assert-True ([bool]$installWizardLine) 'SPK listing has no install wizard.'
+            Assert-True ([bool]$upgradeWizardLine) 'SPK listing has no upgrade wizard.'
             if ($startStopLine) { Assert-True ($startStopLine -match '^-rwxr-xr-x\s') 'start-stop-status mode must be 0755.' }
             if ($setupLine) { Assert-True ($setupLine -match '^-rwxr-xr-x\s') 'service-setup mode must be 0755.' }
             if ($privilegeLine) { Assert-True ($privilegeLine -match '^-rw-r--r--\s') 'conf/privilege mode must be 0644.' }
+            if ($installWizardLine) { Assert-True ($installWizardLine -match '^-rw-r--r--\s') 'Install wizard mode must be 0644.' }
+            if ($upgradeWizardLine) { Assert-True ($upgradeWizardLine -match '^-rw-r--r--\s') 'Upgrade wizard mode must be 0644.' }
         }
         $numericOuterListing = @(& tar --numeric-owner -tvf $resolvedPackage)
         if ($LASTEXITCODE -ne 0) {
@@ -184,7 +194,11 @@ function Validate-BuiltSpk {
                 'lib/libncursesw.so.6.6',
                 'lib/libatomic.so.1.2.0',
                 'lib/ejabberd-26.07/ebin/mod_maer_pairing.beam',
+                'lib/ejabberd-26.07/ebin/mod_maer_portal.beam',
+                'lib/ejabberd-26.07/ebin/maer_portal_smtp.beam',
                 'lib/ejabberd-26.07/ebin/mod_maer_redirect.beam',
+                'lib/ejabberd-26.07/priv/maer_portal/portal.css',
+                'lib/ejabberd-26.07/priv/maer_portal/portal.js',
                 'share/maerxmppserver/defaults/ejabberd.yml',
                 'share/maerxmppserver/defaults/ejabberdctl.cfg',
                 'share/maerxmppserver/defaults/inetrc',
@@ -347,6 +361,8 @@ $requiredFiles = @(
     'spksrc-overlay\cross\maerxmppserver\digests',
     'spksrc-overlay\cross\maerxmppserver\PLIST.auto',
     'spksrc-overlay\cross\maerxmppserver\patches\002-rebar-deterministic-beam.patch',
+    'spksrc-overlay\cross\maerxmppserver\patches\003-maer-user-portal.patch',
+    'spksrc-overlay\cross\maerxmppserver\patches\004-maer-webadmin.patch',
     'tests\inspect-pairing-beam.escript',
     'spksrc-overlay\spk\maerxmppserver\Makefile',
     'spksrc-overlay\spk\maerxmppserver\src\COPYING',
@@ -363,6 +379,8 @@ $requiredFiles = @(
     'spksrc-overlay\spk\maerxmppserver\src\defaults\ejabberd.yml',
     'spksrc-overlay\spk\maerxmppserver\src\defaults\ejabberdctl.cfg',
     'spksrc-overlay\spk\maerxmppserver\src\defaults\inetrc',
+    'spksrc-overlay\spk\maerxmppserver\src\wizard\install_uifile',
+    'spksrc-overlay\spk\maerxmppserver\src\wizard\upgrade_uifile',
     'PUBLICATION-PREFLIGHT.md',
     'dsm-publication-preflight.ps1',
     'tests\expected-info.json',
@@ -371,7 +389,8 @@ $requiredFiles = @(
     'tests\test-service-contract.sh',
     'tests\test-upload-monitor.sh',
     'tests\test-certificate-sync.sh',
-    'tests\test-bootstrap-admin.sh'
+    'tests\test-bootstrap-admin.sh',
+    'tests\test-maer-portal.ps1'
 )
 foreach ($relativeFile in $requiredFiles) {
     Assert-True (Test-Path -LiteralPath (Join-Path $synologyRoot $relativeFile) -PathType Leaf) "Required file is missing: $relativeFile"
@@ -451,8 +470,10 @@ $opensslMakefile = Read-TextNormalized (Join-Path $overlayRoot 'cross\openssl3-m
 $opensslBuildInfoPatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\openssl3-maer\patches\001-sanitize-build-information.patch')
 $serverMakefile = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\Makefile')
 $rebarDeterministicPatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\patches\002-rebar-deterministic-beam.patch')
+$portalSourcePatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\patches\003-maer-user-portal.patch')
+$webAdminSourcePatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\patches\004-maer-webadmin.patch')
 $serverPatchNames = @(Get-ChildItem -LiteralPath (Join-Path $overlayRoot 'cross\maerxmppserver\patches') -File | Sort-Object Name | ForEach-Object Name)
-Assert-Equal ($serverPatchNames -join ',') '002-rebar-deterministic-beam.patch' 'Server patch inventory contains a change already integrated into the locked source.'
+Assert-Equal ($serverPatchNames -join ',') '002-rebar-deterministic-beam.patch,003-maer-user-portal.patch,004-maer-webadmin.patch' 'Server patch inventory must contain only deterministic compilation and the reviewed MAER additions.'
 Assert-Equal (Get-MakeValue $nativeOtpMakefile 'PKG_VERS') $locks.erlang_otp.version 'Native OTP version mismatch.'
 Assert-Equal (Get-MakeValue $crossOtpMakefile 'PKG_VERS') $locks.erlang_otp.version 'Cross OTP version mismatch.'
 Assert-Equal (Get-MakeValue $serverMakefile 'PKG_COMMIT') $locks.maer_xmpp_server.commit 'MAER source commit mismatch.'
@@ -469,6 +490,13 @@ Assert-Equal (Get-MakeValue $crossOtpMakefile 'NATIVE_ERLANG_BIN_DIR') '$(abspat
 Assert-Equal (Get-MakeValue $crossOtpMakefile 'ENV') 'PATH=$(NATIVE_ERLANG_BIN_DIR):$$PATH' 'Pinned native OTP must take precedence over the system Erlang runtime.'
 Assert-True (-not ($serverMakefile.Contains('ERL_COMPILER_OPTIONS'))) 'Deterministic compiler options must not leak from spksrc into OTP dependency builds.'
 Assert-True ($rebarDeterministicPatch.Contains('{erl_opts, [deterministic,')) 'Root ejabberd rebar options must enable deterministic BEAM output.'
+foreach ($portalPatchPath in @('src/maer_portal_smtp.erl', 'src/mod_maer_portal.erl', 'priv/maer_portal/portal.css', 'priv/maer_portal/portal.js')) {
+    Assert-True ($portalSourcePatch.Contains("+++ b/$portalPatchPath")) "Locked server patch must add the portal file: $portalPatchPath"
+}
+Assert-True ($webAdminSourcePatch.Contains('+++ b/src/ejabberd_web_admin.erl')) 'Locked server patch must contain the reviewed WebAdmin users-page fix.'
+Assert-True ($webAdminSourcePatch.Contains('+++ b/priv/css/admin.css')) 'Locked server patch must contain the MAER WebAdmin theme.'
+Assert-True ($serverMakefile.Contains('cp maer/assets/maer-mark.png priv/img/admin-logo.png')) 'WebAdmin build must install the reviewed MAER logo.'
+Assert-True ($serverMakefile.Contains('cp maer/assets/maer-mark.png priv/img/favicon.png')) 'WebAdmin build must install the reviewed MAER favicon.'
 Assert-True ($rebarDeterministicPatch.Contains('{add, [{erl_opts, [deterministic]}]}')) 'All locked rebar dependencies must enable deterministic BEAM output.'
 Assert-True ($crossOtpNcursesPatch -match 'termcap_libs="tinfo ncursesw ncurses curses termcap termlib"') 'Cross OTP must probe the ncursesw library that spksrc actually stages.'
 Assert-True ($crossOtpOpenSslPatch -match 'CFLAGS = -Iopenssl/include @LIB_CFLAGS@') 'Cross OTP erl_interface must prefer its staged OpenSSL 3 headers.'
@@ -573,6 +601,8 @@ $configPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\defaults\ejabberd.y
 $controlConfigPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\defaults\ejabberdctl.cfg'
 $serviceSetupPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\service-setup.sh'
 $serviceScriptPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\service-start-stop.sh'
+$installWizardPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\wizard\install_uifile'
+$upgradeWizardPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\wizard\upgrade_uifile'
 $uploadMonitorPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\upload-usage-check.sh'
 $certificateSyncPath = Join-Path $synologyRoot 'operator\maer-certificate-sync'
 $certificateInstallerPath = Join-Path $synologyRoot 'operator\install-certificate-sync-root'
@@ -587,6 +617,8 @@ $configText = Read-TextNormalized $configPath
 $controlConfigText = Read-TextNormalized $controlConfigPath
 $serviceSetupText = Read-TextNormalized $serviceSetupPath
 $serviceScriptText = Read-TextNormalized $serviceScriptPath
+$installWizardText = Read-TextNormalized $installWizardPath
+$upgradeWizardText = Read-TextNormalized $upgradeWizardPath
 $uploadMonitorText = Read-TextNormalized $uploadMonitorPath
 $firewallText = Read-TextNormalized $firewallPath
 $attributesText = Read-TextNormalized $attributesPath
@@ -611,6 +643,11 @@ Assert-True ($configText -match '(?m)^\s+mod_mam:$') 'MAM module is missing.'
 Assert-True ($configText -match '(?m)^\s+mod_muc:$') 'MUC module is missing.'
 Assert-True ($configText -match '(?m)^\s+/maer-pairing: mod_maer_pairing$') 'MAER pairing must be exposed only by the configured HTTPS listener.'
 Assert-True ($configText -match '(?m)^\s+mod_maer_pairing: \{\}$') 'MAER pairing module is missing.'
+Assert-True ($configText -match '(?m)^\s+/account: mod_maer_portal$') 'MAER account portal must be exposed by the configured HTTPS listener.'
+Assert-True ($configText -match '(?m)^\s+mod_maer_portal:$') 'MAER account portal module is missing.'
+Assert-True ($configText -match '(?m)^\s+database_path: /var/packages/maerxmppserver/var/data/maer-portal\.sqlite$') 'Portal must use its dedicated SQLite database.'
+Assert-True ($configText -match '(?m)^\s+smtp_host: smtp-zose\.yulpa\.io$') 'Portal must use the reviewed Yulpa implicit-TLS SMTP endpoint.'
+Assert-True ($configText -match '(?m)^\s+smtp_password_file: /var/packages/maerxmppserver/var/config/smtp-password$') 'Portal SMTP password must remain outside YAML in the server-side credential file.'
 Assert-True ($configText -match '(?m)^\s+mod_pubsub:$') 'PubSub/PEP module is missing.'
 Assert-True ($configText -match '(?m)^\s+mod_push:$') 'Push module is missing.'
 Assert-True (-not ($configText -match '(?m)^\s+mod_register:')) 'Public in-band registration must remain disabled.'
@@ -627,13 +664,18 @@ Assert-True ($configText.Contains('bosh_service_url: https://xmpp.maer.fr/http-b
 Assert-True ($configText.Contains('websocket_url: wss://xmpp.maer.fr/xmpp-websocket')) 'Host-meta WebSocket URL must use canonical public HTTPS 443.'
 Assert-True ($configText.Contains('put_url: https://xmpp.maer.fr/upload')) 'HTTP Upload URL must use canonical public HTTPS 443.'
 Assert-True (-not ($configText.Contains('xmpp.maer.fr:5443'))) 'Public protocol URLs must never expose the loopback backend port 5443.'
-foreach ($header in @('Access-Control-Allow-Origin', 'Content-Security-Policy', 'Referrer-Policy', 'Strict-Transport-Security', 'X-Content-Type-Options', 'X-Frame-Options')) {
+foreach ($header in @('Access-Control-Allow-Origin', 'Referrer-Policy', 'Strict-Transport-Security', 'X-Content-Type-Options', 'X-Frame-Options')) {
     Assert-True ($configText -match "(?m)^      $([regex]::Escape($header)):") "HTTPS listener security header is missing: $header"
 }
-Assert-True ($configText.Contains('Access-Control-Allow-Origin: https://xmpp.maer.fr')) 'CORS origin must be restricted to the canonical MAER origin.'
-Assert-True ($configText -match '(?m)^websocket_origin:\n  - https://xmpp\.maer\.fr$') 'WebSocket browser origins must be restricted to the canonical MAER origin.'
+Assert-True (-not ($configText.Contains('Content-Security-Policy:'))) 'Listener-wide CSP must not override the route-specific portal and HTTP Upload policies.'
+Assert-Equal ([regex]::Matches($configText, '(?m)^\s+Access-Control-Allow-Origin: maer-chat://app$').Count) 2 'CORS must be restricted to the privileged Electron origin on the listener and upload module.'
+Assert-True ($configText -match '(?m)^websocket_origin:\n  - https://xmpp\.maer\.fr\n  - maer-chat://app$') 'WebSocket browser origins must be restricted to the web UI and privileged Electron scheme.'
+Assert-True (-not ($configText.Contains('file://'))) 'The unsafe Electron file origin must never be trusted.'
 Assert-True ($configText -match '(?m)^trusted_proxies:\n  - 127\.0\.0\.0/8\n  - ::1/128$') 'Only IPv4 and IPv6 loopback proxies may be trusted globally.'
 Assert-True (-not ($configText -match '(?m)^trusted_proxies:\s*all$|(?ms)^trusted_proxies:\s*\n\s+- all\s*$')) 'trusted_proxies must never accept all sources.'
+Assert-True ($configText -match '(?ms)^  maer_fail2ban_exempt:\n    ip:\n      - 127\.0\.0\.0/8\n      - ::1/128\n      - 192\.168\.30\.0/24$') 'Fail2ban exemption must contain only loopback and the trusted LAN/hairpin subnet.'
+Assert-True ($configText -match '(?ms)^  maer_fail2ban_whitelist:\n    allow: maer_fail2ban_exempt\n    deny: all$') 'Fail2ban whitelist must allow only the bounded exemption ACL and deny WAN sources.'
+Assert-True ($configText -match '(?ms)^  mod_fail2ban:\n    access: maer_fail2ban_whitelist$') 'mod_fail2ban must use the bounded LAN whitelist.'
 Assert-True ($configText -match '(?ms)^  soft_upload_quota:\n    500: all\n  hard_upload_quota:\n    600: all$') 'HTTP Upload soft/hard quotas must be exactly 500/600 MiB.'
 Assert-True ($configText -match '(?ms)^  mod_http_upload_quota:\n    access_soft_quota: soft_upload_quota\n    access_hard_quota: hard_upload_quota\n    max_days: 30$') 'HTTP Upload quota module must enforce the declared rules and 30-day retention.'
 Assert-True ($configText.Contains('/usr/local/etc/certificate/maerxmppserver/maerxmppserver_client/xmpp.pem')) 'Canonical root-managed certificate path is missing.'
@@ -645,6 +687,7 @@ Assert-True ($attributesText -match '(?m)^COPYING text eol=lf$') 'Canonical COPY
 Assert-True ($publicationGuideText.Contains('xmpp.maer.fr:443')) 'DSM publication guide must document the public 443 topology.'
 Assert-True ($publicationGuideText.Contains('127.0.0.1:5443')) 'DSM publication guide must document the loopback HTTPS backend.'
 Assert-True ($publicationGuideText.Contains('127.0.0.1:5080')) 'DSM publication guide must document the loopback HTTP redirect backend.'
+Assert-True ($publicationGuideText -match '(?m)^- `/account`\.$') 'DSM publication guide must expose the user portal prefix.'
 Assert-True ($publicationGuideText.Contains('_xmpp-client._tcp.xmpp.maer.fr')) 'DSM publication guide must document the client SRV record.'
 Assert-True ($publicationPreflightText.Contains('"_xmpp-client._tcp.$Domain"')) 'DSM preflight must verify the client SRV record.'
 Assert-True ($publicationPreflightText -match 'privatePort in @\(4369, 5080, 5211, 5269, 5280, 5443\)') 'DSM preflight must verify all private redirect, Erlang, S2S, admin, and backend ports remain closed.'
@@ -653,9 +696,12 @@ Assert-True ($publicationPreflightText.Contains('Test-XmppStartTls')) 'DSM prefl
 Assert-True ($publicationPreflightText.Contains('Test-ObsoleteTlsRejection')) 'DSM preflight must reject TLS 1.0 and TLS 1.1 explicitly.'
 Assert-True ($publicationPreflightText.Contains('$RetiredDomain')) 'DSM preflight must verify the retired domain supplied by the operator.'
 Assert-True ($publicationPreflightText.Contains('https://untrusted.invalid')) 'DSM preflight must reject a hostile WebSocket origin.'
+Assert-True ($publicationPreflightText.Contains("Path = '/account/'")) 'DSM preflight must verify the public user portal.'
 Assert-True ($workflowText -match 'uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683') 'GitHub checkout action must be pinned to the immutable v4.2.2 commit.'
 Assert-Equal ([regex]::Matches($workflowText, '(?m)^\s+- src/mod_maer_pairing\.erl$').Count) 2 'Pairing source changes must trigger both push and pull-request package validation.'
 Assert-Equal ([regex]::Matches($workflowText, '(?m)^\s+- src/mod_maer_redirect\.erl$').Count) 2 'Redirect source changes must trigger both push and pull-request package validation.'
+Assert-Equal ([regex]::Matches($workflowText, '(?m)^\s+- src/mod_maer_portal\.erl$').Count) 2 'Portal source changes must trigger both push and pull-request package validation.'
+Assert-Equal ([regex]::Matches($workflowText, '(?m)^\s+- src/maer_portal_smtp\.erl$').Count) 2 'Portal SMTP source changes must trigger both push and pull-request package validation.'
 Assert-True ($controlConfigText -match '(?m)^ERL_DIST_PORT=5211$') 'Fixed Erlang distribution port is missing.'
 Assert-True ($controlConfigText -match '(?m)^INET_DIST_INTERFACE=127\.0\.0\.1$') 'Erlang distribution must bind to loopback.'
 
@@ -680,11 +726,33 @@ Assert-True (-not ($serviceScriptText -match 'kill\s+-9|rm\s+-r[fF]|(?m)^\s*(syn
 Assert-True ($serviceScriptText -match 'kill -0') 'Service status must verify the PID without signaling it.'
 Assert-True ($serviceSetupText -match 'chmod 700') 'Runtime directories are not restricted to mode 0700.'
 Assert-True ($serviceSetupText -match 'chmod 600') 'Runtime configuration files are not restricted to mode 0600.'
-Assert-True ($serviceSetupText -match '(?m)^validate_preupgrade\(\)$') 'Clean-install-only package must define an upgrade validation hook.'
-Assert-True ($serviceSetupText -match 'In-place upgrades.*intentionally refused') 'Upgrade refusal must be explicit.'
+Assert-True ($serviceSetupText -match '(?m)^validate_preupgrade\(\)$') 'Package must define an upgrade validation hook.'
+Assert-True ($serviceSetupText -match 'only supports an in-place upgrade from 26\.07\.0-8') 'Upgrade must be restricted to the validated revision-8 source.'
 Assert-True ($serviceSetupText -match 'requires an empty package data directory') 'Clean install must reject retained package state.'
 Assert-True (-not ($serviceSetupText -match '(?ms)^service_postupgrade\(\).*?install_runtime_defaults')) 'Upgrade hook must never preserve an older runtime profile.'
-Assert-True (-not ($serviceSetupText -match '(?m)^\s*(rm|mv)\s')) 'Installer setup must not remove or replace existing state.'
+Assert-True ($serviceSetupText -match '(?ms)^service_postupgrade\(\).*?backup_upgrade_configuration.*?replace_default_file ejabberd\.yml') 'Revision-8 configuration must be backed up before the canonical revision-9 profile is installed.'
+Assert-True (-not ($serviceSetupText -match '(?m)^\s*rm\s+-r')) 'Installer setup must not recursively remove existing state.'
+Assert-True ($serviceSetupText -match 'temporary_file="\$\{target_file\}\.maer-upgrade\.\$\$"') 'Upgrade replacement must use a bounded temporary configuration path.'
+Assert-True ($serviceSetupText -match 'mv "\$\{temporary_file\}" "\$\{target_file\}"') 'Upgrade replacement must atomically install the canonical profile.'
+Assert-True ($serviceSetupText -match '(?m)^install_smtp_password\(\)$') 'Installer must provision the SMTP secret through a dedicated routine.'
+Assert-True ($serviceSetupText -match '(?m)^validate_smtp_password_input\(\)$') 'Installer must validate SMTP input before changing package state.'
+Assert-True ($serviceSetupText -match '(?ms)^validate_preinst\(\).*?validate_smtp_password_input \|\| exit 1') 'Clean-install preflight must reject missing or invalid SMTP input.'
+Assert-True ($serviceSetupText -match '(?ms)^validate_preupgrade\(\).*?validate_smtp_password_input \|\| exit 1') 'Upgrade preflight must reject missing or invalid SMTP input before migration.'
+Assert-True ($serviceSetupText -match 'secret_file="\$\{CONFIG_DIR\}/smtp-password"') 'SMTP secret must be written only below the package configuration directory.'
+Assert-True ($serviceSetupText -match 'chmod 600 "\$\{temporary_file\}"') 'SMTP secret must be staged with mode 0600.'
+Assert-True (-not ($serviceSetupText -match '(?m)^\s*(echo|printf).*wizard_smtp_password')) 'Installer must never print the SMTP password.'
+Assert-True ($serviceSetupText -match '(?ms)^service_postinst\(\).*?install_runtime_defaults \|\| exit 1.*?install_smtp_password \|\| exit 1') 'DSM post-install hook must fail closed when runtime or SMTP provisioning fails.'
+Assert-True ($serviceSetupText -match '(?ms)^service_postupgrade\(\).*?replace_default_file ejabberd\.yml \|\| exit 1.*?install_smtp_password \|\| exit 1') 'DSM post-upgrade hook must fail closed when migration or SMTP provisioning fails.'
+$null = $installWizardText | ConvertFrom-Json
+$null = $upgradeWizardText | ConvertFrom-Json
+foreach ($wizardText in @($installWizardText, $upgradeWizardText)) {
+    Assert-True ($wizardText.Contains('"key": "wizard_smtp_password"')) 'DSM wizard must use the service-setup SMTP password variable.'
+    Assert-True ($wizardText.Contains('"allowBlank": false')) 'DSM wizard must refuse an empty SMTP password.'
+    Assert-True ($wizardText.Contains('"minLength": 12')) 'DSM wizard must enforce the reviewed minimum SMTP password length.'
+    Assert-True ($wizardText.Contains('"maxLength": 4094')) 'DSM wizard must enforce the SMTP transport maximum password length.'
+    Assert-True ($wizardText.Contains('no-reply@maer.fr')) 'DSM wizard must identify the exact portal sender account.'
+    Assert-True ($wizardText.Contains('mode 0600')) 'DSM wizard must explain how the SMTP secret is protected.'
+}
 Assert-True (-not ($serviceSetupText -match '(?m)^\s*HOME=(?!"\$\{MAER_PACKAGE_ROOT\}/home"$)')) 'Service setup must not direct Erlang HOME outside the DSM package home.'
 
 Assert-True ($uploadMonitorText -match 'MAER_UPLOAD_FS_WARN_PERCENT:-80') 'Global upload monitor warning threshold must default to 80 percent.'
@@ -704,9 +772,17 @@ Assert-True ($certificateInstallerText.Contains('trap cleanup EXIT') -and $certi
 $bootstrapAdminText = Read-TextNormalized $bootstrapAdminPath
 $pairingSourceText = Read-TextNormalized (Join-Path $repositoryRoot 'src\mod_maer_pairing.erl')
 $redirectSourceText = Read-TextNormalized (Join-Path $repositoryRoot 'src\mod_maer_redirect.erl')
+$portalSourceText = Read-TextNormalized (Join-Path $repositoryRoot 'src\mod_maer_portal.erl')
+$portalSmtpSourceText = Read-TextNormalized (Join-Path $repositoryRoot 'src\maer_portal_smtp.erl')
 Assert-True ($redirectSourceText.Contains('{301,')) 'HTTP redirect handler must use an ejabberd-compatible permanent 301 response.'
 Assert-True (-not $redirectSourceText.Contains('{308,')) 'HTTP redirect handler must not use unsupported status 308 with ejabberd 26.07.'
 Assert-True ($redirectSourceText.Contains('https://xmpp.maer.fr/')) 'HTTP redirect handler must use the canonical HTTPS origin.'
+Assert-True ($portalSourceText.Contains('-define(HOST, <<"xmpp.maer.fr">>).')) 'Portal authentication must remain fixed to the canonical XMPP host.'
+Assert-True ($portalSourceText.Contains('; Secure; HttpOnly; SameSite=Strict')) 'Portal session and CSRF cookies must remain hardened.'
+Assert-True ($portalSourceText.Contains('<<Base/binary, "/", Suffix/binary, "#", Token/binary>>')) 'Portal email tokens must remain outside HTTP request logs in URL fragments.'
+Assert-True ($portalSmtpSourceText.Contains('{verify, verify_peer}')) 'Portal SMTP transport must verify its TLS peer.'
+Assert-True ($portalSmtpSourceText.Contains('pkix_verify_hostname_match_fun(https)')) 'Portal SMTP transport must verify the server hostname.'
+Assert-True (-not ($portalSourceText -match 'ejabberd_web_admin\s*:|-include\([^\n]*web_admin')) 'Portal must remain independent from the WebAdmin implementation.'
 Assert-True ($pairingSourceText.Contains('xmpp:err_policy_violation()')) 'Pairing throttling must use policy-violation in the locked source.'
 Assert-True ($pairingSourceText.Contains('xmpp:err_resource_constraint()')) 'The device cap must retain resource-constraint in the locked source.'
 Assert-True ($pairingSourceText.Contains('iq_rate_limit_condition_test()')) 'The locked source must test the pairing throttling stanza condition.'

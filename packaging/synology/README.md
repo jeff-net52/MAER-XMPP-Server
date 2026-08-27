@@ -10,7 +10,7 @@ sur un NAS.
 |---|---|
 | Identifiant | `maerxmppserver` |
 | Nom affiché | `MAER XMPP Server` |
-| Version SPK | `26.07.0-8` |
+| Version SPK | `26.07.0-9` |
 | Architecture | `armada38x` uniquement |
 | DSM minimal | `7.2-72806` |
 | Compte de service | `sc-maerxmppserver`, jamais `root` |
@@ -38,19 +38,23 @@ Le code en lecture seule est installé sous
 
 | Chemin | Usage | Mode créé |
 |---|---|---|
-| `config` | `ejabberd.yml`, `ejabberdctl.cfg`, `inetrc` | `0700`; fichiers `0600` |
+| `config` | `ejabberd.yml`, `ejabberdctl.cfg`, `inetrc`, secret SMTP | `0700`; fichiers `0600` |
 | `data` | SQLite et données Mnesia techniques | `0700` |
 | `log` | journaux et crash dumps Erlang | `0700` |
 | `run` | PID ejabberd | `0700` |
 | `upload` | pièces jointes HTTP Upload | `0700`; fichiers `0600` |
 
-La révision 4 refuse volontairement toute mise à niveau en place et toute
-installation qui retrouve un répertoire de données non vide. Il faut exporter
-séparément les sauvegardes réellement nécessaires, désinstaller l'ancienne
-révision avec ses données, puis effectuer une installation propre. Cette rupture
-empêche qu'un ancien profil, une base de comptes ou des uploads hérités soient
-conservés silencieusement. Aucune procédure de restauration automatique n'est
-fournie dans cette révision.
+La révision 9 accepte une seule migration en place : depuis `26.07.0-8`.
+Elle conserve les comptes, les données XMPP et les uploads, sauvegarde
+`ejabberd.yml` sous `ejabberd.yml.pre-26.07.0-9`, puis installe atomiquement le
+profil canonique rev9. Toute autre version source est refusée. Une installation
+neuve continue d'exiger un répertoire de données vide afin de ne jamais adopter
+silencieusement un état étranger au paquet.
+
+Le mot de passe de `no-reply@maer.fr` est demandé par l'assistant DSM à
+l'installation ou pendant la migration rev8 → rev9. Il est écrit uniquement
+dans `var/config/smtp-password` en mode `0600`; il n'apparaît ni dans
+`ejabberd.yml`, ni dans les journaux, ni dans le dépôt.
 
 Le service fixe `HOME` au répertoire d'état privé du paquet. Certaines voies de
 lancement DSM omettent cette variable ; Erlang ne peut alors ni localiser ni
@@ -234,7 +238,15 @@ Cette barrière enregistre et bloque explicitement les régressions déjà renco
 - absence de `crypto_callback.so`, chargeur OpenSSL dynamique indispensable à OTP 27 ;
 - suppression abusive de `httpd_example.beam`, module runtime `inets` requis par ejabberd ;
 - `HOME` Erlang absent ou situé hors du répertoire privé du compte DSM ;
-- mode non exécutable des scripts DSM, dépendance ELF manquante, RPATH non canonique ou lien symbolique pendant.
+- mode non exécutable des scripts DSM, dépendance ELF manquante, RPATH non canonique ou lien symbolique pendant ;
+- page WebAdmin des utilisateurs cassée lorsqu'un compte n'a aucune donnée `mod_last` ;
+- création de compte testée sans cookie ou jeton CSRF réellement fourni par WebAdmin ;
+- bannissement de tous les clients locaux partageant l'adresse de sortie du réseau ;
+- origine Electron `file://` ou absence de l'origine privilégiée exacte `maer-chat://app` ;
+- absence des modules, feuilles de style, scripts ou logo du portail/WebAdmin MAER ;
+- secret SMTP placé dans le YAML, imprimé par l'installeur ou créé avec un mode autre que `0600` ;
+- assistant DSM d'installation/migration absent du SPK final ;
+- migration rev8 → rev9 qui remplace ou supprime la base de comptes au lieu de ne rafraîchir que le profil runtime.
 
 Le paquet ne doit être copié sur le NAS qu'après le message
 `MAER XMPP Server release gate passed` et l'émission de son SHA-256.
@@ -307,7 +319,7 @@ make -C spk/maerxmppserver arch-armada38x-7.1
 ```
 
 Le SPK attendu est alors
-`packages/maerxmppserver_armada38x-7.1_26.07.0-8.spk`, à la racine du checkout
+`packages/maerxmppserver_armada38x-7.1_26.07.0-9.spk`, à la racine du checkout
 `spksrc`.
 
 Une seconde exécution de la même commande réassemble le paquet. Son SHA-256
@@ -318,7 +330,7 @@ Après le build, valider le SPK réel, y compris `INFO`, `conf/privilege` et les
 modes des scripts :
 
 ```powershell
-pwsh -NoProfile -File packaging/synology/tests/validate-source.ps1 -SpkPath /chemin/vers/maerxmppserver_armada38x-7.1_26.07.0-8.spk
+pwsh -NoProfile -File packaging/synology/tests/validate-source.ps1 -SpkPath /chemin/vers/maerxmppserver_armada38x-7.1_26.07.0-9.spk
 ```
 
 Le choix `--disable-year2038` est intentionnel pour ce premier essai 32 bits

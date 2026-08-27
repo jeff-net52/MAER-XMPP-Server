@@ -7,8 +7,7 @@ Deployment date: 2026-08-27 (Europe/Paris)
 `maerxmppserver` version `26.07.0-8` is installed on Synology DSM, volume 2,
 and DSM reports the package as running.
 
-The public canonical service is `xmpp.maer.fr`. No compatibility alias for
-`contacts.chaumont.me` is configured or required.
+The public canonical service is `xmpp.maer.fr`.
 
 ## Incident fixed
 

@@ -1,0 +1,164 @@
+diff --git a/priv/css/admin.css b/priv/css/admin.css
+index 048a693e..7b48d3de 100644
+--- a/priv/css/admin.css
++++ b/priv/css/admin.css
+@@ -5,2 +5,3 @@ html,body {
+-  background: #f9f9f9;
+-  font-family: sans-serif;
++  background: #0d171c;
++  color: #e8f1f5;
++  font-family: "Segoe UI", Arial, sans-serif;
+@@ -13 +14 @@ a {
+-  color: #3eaffa;
++  color: #50e5ff;
+@@ -37 +38 @@ html>body #container {
+-  background-color: #49cbc1;
++  background-color: #101d23;
+@@ -130,2 +131,2 @@ ul li #navhead a, ul li #navheadsub a, ul li #navheadsubsub a {
+-  border-top: 3px solid #49cbc1;
+-  background: #424a55;
++  border-top: 3px solid #bd80ff;
++  background: #202e35;
+@@ -275 +276 @@ table tr:nth-child(odd) {
+-  background: #fff;
++  background: #16242b;
+@@ -278,0 +280,52 @@ table.withtextareas>tbody>tr>td {
++}
++
++/* MAER Chat WebAdmin theme */
++#content {
++  background: #101d23;
++  color: #e8f1f5;
++  border: 1px solid #31434c;
++  border-radius: 12px;
++  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
++}
++#navigation ul,
++#navigation li,
++td.leftcontent,
++td.rightcontent {
++  background: #16242b;
++  color: #e8f1f5;
++}
++#navigation ul li a {
++  color: #e8f1f5;
++}
++#navigation ul li a:hover,
++#navigation ul li a:focus {
++  color: #50e5ff;
++  background: #202e35;
++}
++#welcome,
++td.leftheader,
++thead tr td {
++  background: #202e35;
++  color: #e8f1f5;
++  border-color: #31434c;
++}
++h1, h2, h3, h4 {
++  color: #50e5ff;
++}
++input, select, textarea, button {
++  color: #e8f1f5;
++  background: #202e35;
++  border: 1px solid #50636d;
++  border-radius: 6px;
++}
++input[type="submit"], button {
++  color: #101d23;
++  background: #3cff82;
++  border-color: #3cff82;
++  font-weight: 600;
++}
++.actionresult.success {
++  border-left: 4px solid #3cff82;
++}
++.actionresult.error {
++  border-left: 4px solid #ffad66;
+diff --git a/src/ejabberd_web_admin.erl b/src/ejabberd_web_admin.erl
+index 2aef0dae..f18bc138 100644
+--- a/src/ejabberd_web_admin.erl
++++ b/src/ejabberd_web_admin.erl
+@@ -318 +318 @@ make_xhtml(Els, Host, Node, Username, #request{lang = Lang} = R, JID, Level) ->
+-			    [?XCT(<<"title">>, ?T("ejabberd Web Admin")),
++			    [?XCT(<<"title">>, <<"Administration MAER Chat">>),
+@@ -363 +363 @@ make_xhtml(Els, Host, Node, Username, #request{lang = Lang} = R, JID, Level) ->
+-					    <<"ejabberd Web Admin">>)])]),
++					    <<"Administration MAER Chat">>)])]),
+@@ -454,5 +454,5 @@ process_admin(global, #request{path = [], lang = Lang} = Request, AJID) ->
+-             [?XC(<<"p">>, <<"Welcome to ejabberd's WebAdmin!">>),
+-              ?XC(<<"p">>, <<"Browse the menu to navigate your XMPP virtual hosts, "
+-                              "Erlang nodes, and other global server pages...">>),
+-              ?XC(<<"p">>, <<"Some pages have a link in the top right corner "
+-                              "to relevant documentation in ejabberd Docs.">>),
++             [?XC(<<"p">>, <<"Bienvenue dans l'administration MAER Chat.">>),
++              ?XC(<<"p">>, <<"Utilisez le menu pour gérer les domaines XMPP, "
++                              "les comptes, les services et les nœuds du serveur.">>),
++              ?XC(<<"p">>, <<"Certaines pages proposent, en haut à droite, "
++                              "un lien vers la documentation technique.">>),
+@@ -837,6 +837,4 @@ list_users_element(_, row, last, {R, Username, Host}) ->
+-    [?C(element(1,
+-                make_command_raw_value(get_last, R, [{<<"user">>, Username}, {<<"host">>, Host}]))),
+-     ?C(element(2,
+-                make_command_raw_value(get_last,
+-                                       R,
+-                                       [{<<"user">>, Username}, {<<"host">>, Host}])))];
++    last_command_cells(
++      make_command_raw_value(get_last,
++                             R,
++                             [{<<"user">>, Username}, {<<"host">>, Host}]));
+@@ -851,0 +850,7 @@ list_users_element(_, presentation, last, R) ->
++last_command_cells({Timestamp, Status}) ->
++    [?C(Timestamp), ?C(Status)];
++last_command_cells(_) ->
++    %% A user without mod_last data (or a transient command failure) must not
++    %% make the complete account-management page unavailable.
++    [?C(<<>>), ?C(<<>>)].
++
+@@ -1536,2 +1541,2 @@ make_host_menu(Host, HostNodeMenu, HostUserMenu, Lang, JID, Level) ->
+-    HostFixed = [{<<"users">>, ?T("Users"), HostUserMenu},
+-		 {<<"online-users">>, ?T("Online Users")}],
++    HostFixed = [{<<"users">>, <<"Utilisateurs">>, HostUserMenu},
++		 {<<"online-users">>, <<"Utilisateurs en ligne">>}],
+@@ -1790,8 +1795,13 @@ if_cmd_allowed(Name, Request, Fun) ->
+-    try {ejabberd_commands:get_command_definition(Name),
+-         ejabberd_access_permissions:can_access(Name, CallerInfo)}
+-    of
+-        {Cmd, allow} ->
+-            Fun(Cmd);
+-        {_C, deny} ->
+-            ?DEBUG("Blocked access to command ~p for~n CallerInfo: ~p", [Name, CallerInfo]),
+-            ?C(<<"">>)
++    try
++        Cmd = ejabberd_commands:get_command_definition(Name),
++        case ejabberd_access_permissions:can_access(Name, CallerInfo) of
++            allow ->
++                %% Keep command preparation and execution inside the protected
++                %% expression.  Exceptions raised from an `of` clause are not
++                %% handled by the catch clauses of the same try expression.
++                Fun(Cmd);
++            deny ->
++                ?DEBUG("Blocked access to command ~p for~n CallerInfo: ~p",
++                       [Name, CallerInfo]),
++                ?C(<<>>)
++        end
+@@ -1799,2 +1809,3 @@ if_cmd_allowed(Name, Request, Fun) ->
+-        A:B ->
+-            ?INFO_MSG("Problem preparing command ~p: ~p", [Name, {A, B}]),
++        A:B:Stacktrace ->
++            ?ERROR_MSG("Problem preparing or executing WebAdmin command ~p: ~p~n~p",
++                       [Name, {A, B}, Stacktrace]),
+@@ -3107,0 +3119,13 @@ clean_token_duplicates_query(Query) ->
++-ifdef(TEST).
++-include_lib("eunit/include/eunit.hrl").
++
++last_command_cells_tuple_test() ->
++    ?assertEqual(2, length(last_command_cells({1234, <<"absent">>}))).
++
++last_command_cells_missing_value_test() ->
++    ?assertEqual(2, length(last_command_cells({error, not_found, transient}))).
++
++last_command_cells_denied_value_test() ->
++    ?assertEqual(2, length(last_command_cells(<<>>))).
++-endif.
++

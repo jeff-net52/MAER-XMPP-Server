@@ -49,8 +49,16 @@ ensure_runtime_layout()
         "${MAER_VAR_DIR}/run" \
         "${MAER_VAR_DIR}/upload"
     do
-        mkdir -p "${runtime_dir}"
-        chmod 700 "${runtime_dir}"
+        if [ -L "${runtime_dir}" ]; then
+            echo "Refusing symbolic-link runtime directory: ${runtime_dir}" >&2
+            return 1
+        fi
+        mkdir -p "${runtime_dir}" || return 1
+        if [ ! -d "${runtime_dir}" ] || [ -L "${runtime_dir}" ]; then
+            echo "Refusing unsafe runtime directory: ${runtime_dir}" >&2
+            return 1
+        fi
+        chmod 700 "${runtime_dir}" || return 1
     done
 }
 
@@ -67,53 +75,201 @@ install_default_file()
         echo "Refusing symbolic-link configuration: ${target_file}" >&2
         return 1
     fi
+    if [ -e "${target_file}" ] && [ ! -f "${target_file}" ]; then
+        echo "Refusing non-regular configuration: ${target_file}" >&2
+        return 1
+    fi
     if [ ! -e "${target_file}" ]; then
-        cp "${source_file}" "${target_file}"
-        chmod 600 "${target_file}"
+        cp "${source_file}" "${target_file}" || return 1
+        chmod 600 "${target_file}" || return 1
     fi
 }
 
 install_runtime_defaults()
 {
-    ensure_runtime_layout
-    install_default_file ejabberd.yml
-    install_default_file ejabberdctl.cfg
-    install_default_file inetrc
+    ensure_runtime_layout || return 1
+    install_default_file ejabberd.yml || return 1
+    install_default_file ejabberdctl.cfg || return 1
+    install_default_file inetrc || return 1
+}
+
+replace_default_file()
+{
+    source_file="${MAER_DEFAULTS_DIR}/$1"
+    target_file="${CONFIG_DIR}/$1"
+    temporary_file="${target_file}.maer-upgrade.$$"
+
+    if [ ! -f "${source_file}" ] || [ -L "${source_file}" ]; then
+        echo "Missing packaged default: ${source_file}" >&2
+        return 1
+    fi
+    if [ -L "${target_file}" ]; then
+        echo "Refusing symbolic-link configuration: ${target_file}" >&2
+        return 1
+    fi
+    if [ -e "${target_file}" ] && [ ! -f "${target_file}" ]; then
+        echo "Refusing non-regular configuration: ${target_file}" >&2
+        return 1
+    fi
+
+    rm -f "${temporary_file}" || return 1
+    cp "${source_file}" "${temporary_file}" || return 1
+    chmod 600 "${temporary_file}" || return 1
+    mv "${temporary_file}" "${target_file}" || return 1
+}
+
+backup_upgrade_configuration()
+{
+    target_file="${CONFIG_DIR}/ejabberd.yml"
+    backup_file="${CONFIG_DIR}/ejabberd.yml.pre-26.07.0-9"
+
+    if [ ! -f "${target_file}" ] || [ -L "${target_file}" ]; then
+        echo "Cannot back up the installed ejabberd configuration safely." >&2
+        return 1
+    fi
+    if [ -L "${backup_file}" ]; then
+        echo "Refusing symbolic-link upgrade backup: ${backup_file}" >&2
+        return 1
+    fi
+    if [ -e "${backup_file}" ] && [ ! -f "${backup_file}" ]; then
+        echo "Refusing non-regular upgrade backup: ${backup_file}" >&2
+        return 1
+    fi
+    if [ ! -e "${backup_file}" ]; then
+        cp "${target_file}" "${backup_file}" || return 1
+        chmod 600 "${backup_file}" || return 1
+    fi
+}
+
+validate_smtp_password_input()
+{
+    secret_value=${wizard_smtp_password:-}
+    secret_file="${CONFIG_DIR}/smtp-password"
+
+    # A blank value is permitted only when an existing regular secret is
+    # already in place (for example a later maintenance upgrade).  Fresh
+    # installs and the revision-8 migration wizard require a value.
+    if [ -z "${secret_value}" ]; then
+        if [ -f "${secret_file}" ] && [ ! -L "${secret_file}" ]; then
+            if [ ! -s "${secret_file}" ]; then
+                echo "The existing portal SMTP password file is empty." >&2
+                return 1
+            fi
+            secret_file_size=$(wc -c < "${secret_file}") || return 1
+            if [ "${secret_file_size}" -gt 4096 ]; then
+                echo "The existing portal SMTP password file is too large." >&2
+                return 1
+            fi
+            chmod 600 "${secret_file}" || return 1
+            return 0
+        fi
+        echo "A portal SMTP password is required." >&2
+        return 1
+    fi
+    if [ -L "${secret_file}" ]; then
+        echo "Refusing symbolic-link SMTP password file: ${secret_file}" >&2
+        return 1
+    fi
+    if [ -e "${secret_file}" ] && [ ! -f "${secret_file}" ]; then
+        echo "Refusing non-regular SMTP password file: ${secret_file}" >&2
+        return 1
+    fi
+    if [ "${#secret_value}" -lt 12 ]; then
+        echo "The portal SMTP password is too short." >&2
+        return 1
+    fi
+    if [ "${#secret_value}" -gt 4094 ]; then
+        echo "The portal SMTP password is too long." >&2
+        return 1
+    fi
+    if printf '%s' "${secret_value}" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+        echo "The portal SMTP password contains a control character." >&2
+        return 1
+    fi
+}
+
+install_smtp_password()
+{
+    validate_smtp_password_input || return 1
+    temporary_file="${secret_file}.maer-install.$$"
+
+    if [ -z "${secret_value}" ]; then
+        chmod 600 "${secret_file}" || return 1
+        return 0
+    fi
+
+    umask 077
+    rm -f "${temporary_file}" || return 1
+    printf '%s\n' "${secret_value}" > "${temporary_file}" || return 1
+    chmod 600 "${temporary_file}" || return 1
+    mv "${temporary_file}" "${secret_file}" || return 1
+    unset secret_value wizard_smtp_password
 }
 
 validate_preinst()
 {
     # A retained var directory could contain the vulnerable configuration or
-    # account database from an older revision.  Revision 7 deliberately has no
-    # in-place migration path: the operator must remove retained package data
-    # and perform a genuinely clean installation.
+    # account database from an older incompatible revision.  Revision 9 only
+    # supports a narrowly validated upgrade from revision 8; a new installation
+    # must still begin with an empty package data directory.
     if [ -d "${MAER_VAR_DIR}" ]; then
         legacy_entry=$(find "${MAER_VAR_DIR}" -mindepth 1 -maxdepth 1 -print -quit) || {
             echo "Cannot inspect retained package data; refusing installation." >&2
             exit 1
         }
         if [ -n "${legacy_entry}" ]; then
-            echo "MAER XMPP Server 26.07.0-8 requires an empty package data directory." >&2
-            echo "Remove the previous package and its retained data, then install revision 7 cleanly." >&2
+            echo "MAER XMPP Server 26.07.0-9 requires an empty package data directory." >&2
+            echo "Remove the previous package and its retained data, then install revision 9 cleanly." >&2
             exit 1
         fi
     fi
+    validate_smtp_password_input || exit 1
 }
 
 validate_preupgrade()
 {
-    echo "In-place upgrades to MAER XMPP Server 26.07.0-8 are intentionally refused." >&2
-    echo "Export any required backup, uninstall the previous revision with its data, then perform a clean installation." >&2
-    exit 1
+    if [ "${SYNOPKG_OLD_PKGVER:-}" != "26.07.0-8" ]; then
+        echo "MAER XMPP Server 26.07.0-9 only supports an in-place upgrade from 26.07.0-8." >&2
+        echo "Export any required backup and perform a clean installation for every other source version." >&2
+        exit 1
+    fi
+
+    if [ ! -d "${MAER_VAR_DIR}" ] || [ -L "${MAER_VAR_DIR}" ]; then
+        echo "The installed package data directory is missing or unsafe; refusing upgrade." >&2
+        exit 1
+    fi
+    for config_name in ejabberd.yml ejabberdctl.cfg inetrc
+    do
+        config_path="${CONFIG_DIR}/${config_name}"
+        if [ ! -f "${config_path}" ] || [ -L "${config_path}" ]; then
+            echo "An installed ejabberd configuration is missing or unsafe; refusing upgrade." >&2
+            exit 1
+        fi
+    done
+    validate_smtp_password_input || exit 1
 }
 
 service_postinst()
 {
-    install_runtime_defaults
+    install_runtime_defaults || exit 1
+    install_smtp_password || exit 1
 }
 
 service_postupgrade()
 {
-    echo "Unexpected upgrade hook: revision 7 supports clean installation only." >&2
-    exit 1
+    if [ "${SYNOPKG_OLD_PKGVER:-}" != "26.07.0-8" ]; then
+        echo "Unexpected source version during MAER XMPP Server upgrade." >&2
+        exit 1
+    fi
+
+    # SQL/Mnesia account state stays in MAER_VAR_DIR and is intentionally left
+    # untouched.  Only the canonical runtime profile is refreshed so revision 9
+    # can enable the MAER portal and the corrected fail2ban policy.  Keep one
+    # local recovery copy of the revision-8 configuration.
+    ensure_runtime_layout || exit 1
+    backup_upgrade_configuration || exit 1
+    replace_default_file ejabberd.yml || exit 1
+    replace_default_file ejabberdctl.cfg || exit 1
+    replace_default_file inetrc || exit 1
+    install_smtp_password || exit 1
 }

@@ -45,6 +45,9 @@ include ../../mk/spksrc.cross-cc.mk
 maerxmppserver_pre_configure:
 	@$(MSG) Patch rebar dependency configure commands for cross-compilation
 	@$(RUN) ; sed -e "s#\" ./configure \"#\" ./configure $(TC_CONFIGURE_ARGS)\"#g" -i ./rebar.config.script
+	@$(MSG) Install the reviewed MAER mark in the WebAdmin assets
+	@$(RUN) ; cp maer/assets/maer-mark.png priv/img/admin-logo.png
+	@$(RUN) ; cp maer/assets/maer-mark.png priv/img/favicon.png
 	@$(MSG) Generate configure without deriving the version from a Git checkout
 	@$(RUN) ; sed 's#git describe --tags 2>/dev/null || ##' -i ./configure.ac
 	@$(RUN) ; ./autogen.sh
