@@ -78,6 +78,9 @@ jobs:
   merge:
     needs: [build]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
     outputs:
       image-uri: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.merge.outputs.digest }}
     steps:
@@ -105,7 +108,7 @@ jobs:
       - uses: int128/docker-manifest-create-action@v2
         id: merge
         with:
-          index-annotations: ${{ steps.metadata.outputs.labels }}
+          index-annotations: ${{ steps.meta-result.outputs.labels }}
           tags: ${{ steps.meta-result.outputs.tags }}
           sources: |
             ${{ steps.meta-amd.outputs.tags }}

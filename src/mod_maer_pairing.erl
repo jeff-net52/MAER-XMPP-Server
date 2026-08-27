@@ -418,16 +418,10 @@ rate_limited_response() ->
 	 encode_json(#{<<"error">> => <<"rate_limited">>})}.
 
 encode_json(Body) ->
-    case code:ensure_loaded(json) of
-	{module, json} -> iolist_to_binary(json:encode(Body));
-	_ -> jiffy:encode(Body)
-    end.
+    misc:json_encode(Body).
 
 decode_json(Data) ->
-    case code:ensure_loaded(json) of
-	{module, json} -> json:decode(Data);
-	_ -> jiffy:decode(Data, [return_maps])
-    end.
+    misc:json_decode(Data).
 
 allow_http_request(IP,
 		   #state{rate_limits = RateLimits,
@@ -1398,7 +1392,7 @@ cleanup_rate_limits(RateLimits) ->
 %%% Unit tests
 %%%----------------------------------------------------------------------
 
--ifdef(TEST).
+-ifdef(EUNIT).
 -include_lib("eunit/include/eunit.hrl").
 
 strict_public_key_test() ->
