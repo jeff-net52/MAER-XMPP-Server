@@ -244,6 +244,7 @@ Cette barrière enregistre et bloque explicitement les régressions déjà renco
 - bannissement de tous les clients locaux partageant l'adresse de sortie du réseau ;
 - origine Electron `file://` ou absence de l'origine privilégiée exacte `maer-chat://app` ;
 - absence des modules, feuilles de style, scripts ou logo du portail/WebAdmin MAER ;
+- patch serveur au format Git `a/`/`b/` alors que spksrc l'applique avec `patch -p0`, ce qui créerait un faux répertoire `b/` ou attendrait une saisie interactive ;
 - secret SMTP placé dans le YAML, imprimé par l'installeur ou créé avec un mode autre que `0600` ;
 - assistant DSM d'installation/migration absent du SPK final ;
 - migration rev8 → rev9 qui remplace ou supprime la base de comptes au lieu de ne rafraîchir que le profil runtime.

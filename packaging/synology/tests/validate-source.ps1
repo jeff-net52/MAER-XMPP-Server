@@ -390,7 +390,8 @@ $requiredFiles = @(
     'tests\test-upload-monitor.sh',
     'tests\test-certificate-sync.sh',
     'tests\test-bootstrap-admin.sh',
-    'tests\test-maer-portal.ps1'
+    'tests\test-maer-portal.ps1',
+    'tests\test-server-patches.ps1'
 )
 foreach ($relativeFile in $requiredFiles) {
     Assert-True (Test-Path -LiteralPath (Join-Path $synologyRoot $relativeFile) -PathType Leaf) "Required file is missing: $relativeFile"
@@ -491,10 +492,13 @@ Assert-Equal (Get-MakeValue $crossOtpMakefile 'ENV') 'PATH=$(NATIVE_ERLANG_BIN_D
 Assert-True (-not ($serverMakefile.Contains('ERL_COMPILER_OPTIONS'))) 'Deterministic compiler options must not leak from spksrc into OTP dependency builds.'
 Assert-True ($rebarDeterministicPatch.Contains('{erl_opts, [deterministic,')) 'Root ejabberd rebar options must enable deterministic BEAM output.'
 foreach ($portalPatchPath in @('src/maer_portal_smtp.erl', 'src/mod_maer_portal.erl', 'priv/maer_portal/portal.css', 'priv/maer_portal/portal.js')) {
-    Assert-True ($portalSourcePatch.Contains("+++ b/$portalPatchPath")) "Locked server patch must add the portal file: $portalPatchPath"
+    Assert-True ($portalSourcePatch.Contains("+++ $portalPatchPath")) "Locked server patch must add the portal file with a patch -p0 path: $portalPatchPath"
 }
-Assert-True ($webAdminSourcePatch.Contains('+++ b/src/ejabberd_web_admin.erl')) 'Locked server patch must contain the reviewed WebAdmin users-page fix.'
-Assert-True ($webAdminSourcePatch.Contains('+++ b/priv/css/admin.css')) 'Locked server patch must contain the MAER WebAdmin theme.'
+Assert-True ($webAdminSourcePatch.Contains('+++ src/ejabberd_web_admin.erl')) 'Locked server patch must contain the reviewed WebAdmin users-page fix with a patch -p0 path.'
+Assert-True ($webAdminSourcePatch.Contains('+++ priv/css/admin.css')) 'Locked server patch must contain the MAER WebAdmin theme with a patch -p0 path.'
+foreach ($serverPatch in @($rebarDeterministicPatch, $portalSourcePatch, $webAdminSourcePatch)) {
+    Assert-True (-not ($serverPatch -match '(?m)^(?:---|\+\+\+) [ab]/')) 'Server patches must not use Git a/ or b/ prefixes because spksrc applies them with patch -p0.'
+}
 Assert-True ($serverMakefile.Contains('cp maer/assets/maer-mark.png priv/img/admin-logo.png')) 'WebAdmin build must install the reviewed MAER logo.'
 Assert-True ($serverMakefile.Contains('cp maer/assets/maer-mark.png priv/img/favicon.png')) 'WebAdmin build must install the reviewed MAER favicon.'
 Assert-True ($rebarDeterministicPatch.Contains('{add, [{erl_opts, [deterministic]}]}')) 'All locked rebar dependencies must enable deterministic BEAM output.'
@@ -864,6 +868,11 @@ if ($shellExecutable) {
 }
 else {
     Write-Warning 'bash is unavailable; shell syntax and behavior tests were skipped.'
+}
+
+& pwsh -NoProfile -File (Join-Path $testsRoot 'test-server-patches.ps1')
+if ($LASTEXITCODE -ne 0) {
+    Add-Failure 'Server spksrc patch -p0 contract test failed.'
 }
 
 $isWindowsHost = ($env:OS -eq 'Windows_NT')

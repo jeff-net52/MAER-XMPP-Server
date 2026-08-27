@@ -1,7 +1,7 @@
-diff --git a/priv/css/admin.css b/priv/css/admin.css
+diff --git priv/css/admin.css priv/css/admin.css
 index 048a693e..7b48d3de 100644
---- a/priv/css/admin.css
-+++ b/priv/css/admin.css
+--- priv/css/admin.css
++++ priv/css/admin.css
 @@ -5,2 +5,3 @@ html,body {
 -  background: #f9f9f9;
 -  font-family: sans-serif;
@@ -75,10 +75,10 @@ index 048a693e..7b48d3de 100644
 +}
 +.actionresult.error {
 +  border-left: 4px solid #ffad66;
-diff --git a/src/ejabberd_web_admin.erl b/src/ejabberd_web_admin.erl
+diff --git src/ejabberd_web_admin.erl src/ejabberd_web_admin.erl
 index 2aef0dae..f18bc138 100644
---- a/src/ejabberd_web_admin.erl
-+++ b/src/ejabberd_web_admin.erl
+--- src/ejabberd_web_admin.erl
++++ src/ejabberd_web_admin.erl
 @@ -318 +318 @@ make_xhtml(Els, Host, Node, Username, #request{lang = Lang} = R, JID, Level) ->
 -			    [?XCT(<<"title">>, ?T("ejabberd Web Admin")),
 +			    [?XCT(<<"title">>, <<"Administration MAER Chat">>),

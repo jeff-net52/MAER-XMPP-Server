@@ -87,7 +87,7 @@ foreach ($payload in @('mod_maer_portal.beam', 'maer_portal_smtp.beam', 'priv/ma
     Require ($spkMakefile.Contains($payload)) "SPK payload assertion is missing: $payload"
 }
 foreach ($patchedPath in @('src/mod_maer_portal.erl', 'src/maer_portal_smtp.erl', 'priv/maer_portal/portal.css', 'priv/maer_portal/portal.js')) {
-    Require ($serverPatch.Contains("+++ b/$patchedPath")) "Locked source patch does not add $patchedPath"
+    Require ($serverPatch.Contains("+++ $patchedPath")) "Locked source patch does not add $patchedPath with the spksrc patch -p0 path"
 }
 Require ($publication -match '(?m)^- `/account`\.$') 'DSM reverse-proxy allowlist does not publish /account.'
 Require ($publication -match '(?s)ceux de\s+`/account` à 8 Kio') 'DSM proxy body limit for the portal is undocumented.'

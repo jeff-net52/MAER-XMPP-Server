@@ -1,8 +1,8 @@
-diff --git a/src/maer_portal_smtp.erl b/src/maer_portal_smtp.erl
+diff --git src/maer_portal_smtp.erl src/maer_portal_smtp.erl
 new file mode 100644
 index 00000000..549f947f
 --- /dev/null
-+++ b/src/maer_portal_smtp.erl
++++ src/maer_portal_smtp.erl
 @@ -0,0 +1,288 @@
 +%%%----------------------------------------------------------------------
 +%%% Minimal TLS-only SMTP transport for the MAER Chat account portal.
@@ -292,11 +292,11 @@ index 00000000..549f947f
 +    ?assertNot(configured(Opts)).
 +
 +-endif.
-diff --git a/src/mod_maer_portal.erl b/src/mod_maer_portal.erl
+diff --git src/mod_maer_portal.erl src/mod_maer_portal.erl
 new file mode 100644
 index 00000000..d90b1a7b
 --- /dev/null
-+++ b/src/mod_maer_portal.erl
++++ src/mod_maer_portal.erl
 @@ -0,0 +1,1514 @@
 +%%%----------------------------------------------------------------------
 +%%% MAER Chat self-service account portal.
@@ -1812,11 +1812,11 @@ index 00000000..d90b1a7b
 +    ?assertNot(consume_preauth(Hash, IP, State)).
 +
 +-endif.
-diff --git a/priv/maer_portal/portal.css b/priv/maer_portal/portal.css
+diff --git priv/maer_portal/portal.css priv/maer_portal/portal.css
 new file mode 100644
 index 00000000..4f80b90c
 --- /dev/null
-+++ b/priv/maer_portal/portal.css
++++ priv/maer_portal/portal.css
 @@ -0,0 +1,155 @@
 +:root {
 +  color: #172230;
@@ -1973,11 +1973,11 @@ index 00000000..4f80b90c
 +@media (prefers-reduced-motion: reduce) {
 +  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
 +}
-diff --git a/priv/maer_portal/portal.js b/priv/maer_portal/portal.js
+diff --git priv/maer_portal/portal.js priv/maer_portal/portal.js
 new file mode 100644
 index 00000000..f207c5ec
 --- /dev/null
-+++ b/priv/maer_portal/portal.js
++++ priv/maer_portal/portal.js
 @@ -0,0 +1,25 @@
 +(() => {
 +  "use strict";
