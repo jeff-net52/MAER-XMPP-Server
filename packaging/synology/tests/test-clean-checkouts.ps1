@@ -50,7 +50,7 @@ function Assert-LfCheckout {
         'packaging/synology/tests/validate-source.ps1',
         'packaging/synology/dsm-publication-preflight.ps1',
         'packaging/synology/spksrc-overlay/spk/maerxmppserver/Makefile',
-        'packaging/synology/spksrc-overlay/cross/maerxmppserver/patches/001-pairing-distinct-iq-limit-errors.patch',
+        'packaging/synology/spksrc-overlay/cross/maerxmppserver/patches/002-rebar-deterministic-beam.patch',
         'packaging/synology/spksrc-overlay/spk/maerxmppserver/src/COPYING',
         'packaging/synology/spksrc-overlay/spk/maerxmppserver/src/defaults/ejabberd.yml',
         'packaging/synology/spksrc-overlay/spk/maerxmppserver/src/upload-usage-check.sh',

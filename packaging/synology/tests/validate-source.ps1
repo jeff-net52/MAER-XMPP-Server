@@ -346,9 +346,7 @@ $requiredFiles = @(
     'spksrc-overlay\cross\maerxmppserver\Makefile',
     'spksrc-overlay\cross\maerxmppserver\digests',
     'spksrc-overlay\cross\maerxmppserver\PLIST.auto',
-    'spksrc-overlay\cross\maerxmppserver\patches\001-pairing-distinct-iq-limit-errors.patch',
     'spksrc-overlay\cross\maerxmppserver\patches\002-rebar-deterministic-beam.patch',
-    'spksrc-overlay\cross\maerxmppserver\patches\003-operator-bootstrap-admin.patch',
     'tests\inspect-pairing-beam.escript',
     'spksrc-overlay\spk\maerxmppserver\Makefile',
     'spksrc-overlay\spk\maerxmppserver\src\COPYING',
@@ -452,8 +450,9 @@ $crossOtpBuildFlagsPatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\er
 $opensslMakefile = Read-TextNormalized (Join-Path $overlayRoot 'cross\openssl3-maer\Makefile')
 $opensslBuildInfoPatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\openssl3-maer\patches\001-sanitize-build-information.patch')
 $serverMakefile = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\Makefile')
-$pairingLimitPatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\patches\001-pairing-distinct-iq-limit-errors.patch')
 $rebarDeterministicPatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\patches\002-rebar-deterministic-beam.patch')
+$serverPatchNames = @(Get-ChildItem -LiteralPath (Join-Path $overlayRoot 'cross\maerxmppserver\patches') -File | Sort-Object Name | ForEach-Object Name)
+Assert-Equal ($serverPatchNames -join ',') '002-rebar-deterministic-beam.patch' 'Server patch inventory contains a change already integrated into the locked source.'
 Assert-Equal (Get-MakeValue $nativeOtpMakefile 'PKG_VERS') $locks.erlang_otp.version 'Native OTP version mismatch.'
 Assert-Equal (Get-MakeValue $crossOtpMakefile 'PKG_VERS') $locks.erlang_otp.version 'Cross OTP version mismatch.'
 Assert-Equal (Get-MakeValue $serverMakefile 'PKG_COMMIT') $locks.maer_xmpp_server.commit 'MAER source commit mismatch.'
@@ -482,13 +481,6 @@ Assert-True ($crossOtpBuildFlagsPatch -match [regex]::Escape('-v CFLAGS "MAER re
 Assert-True ($crossOtpBuildFlagsPatch -match [regex]::Escape('-v LDFLAGS "/var/packages/maerxmppserver/target/lib"')) 'OTP emulator metadata must contain only the canonical runtime library path.'
 Assert-True ($opensslBuildInfoPatch -match [regex]::Escape('mkbuildinf.pl "MAER reproducible ARMv7 runtime"')) 'OpenSSL build metadata must be sanitized at compile time.'
 Assert-True (-not ($serverMakefile -match 'sed -i\.orig')) 'Server recipe must not create .orig files.'
-Assert-True ($pairingLimitPatch -match '(?m)^--- src/mod_maer_pairing\.erl$') 'Pairing patch old path must be directly applicable with spksrc patch -p0.'
-Assert-True ($pairingLimitPatch -match '(?m)^\+\+\+ src/mod_maer_pairing\.erl$') 'Pairing patch new path must be directly applicable with spksrc patch -p0.'
-Assert-True (-not ($pairingLimitPatch -match '(?m)^(---|\+\+\+) [ab]/')) 'Packaged patches applied with -p0 must not contain git a/ or b/ path prefixes.'
-Assert-True ($pairingLimitPatch.Contains('xmpp:err_policy_violation()')) 'Packaged pairing throttling must use policy-violation.'
-Assert-True ($pairingLimitPatch.Contains('xmpp:err_resource_constraint()')) 'Packaged device cap must retain resource-constraint.'
-Assert-True ($pairingLimitPatch.Contains('iq_rate_limit_condition_test()')) 'Packaged pairing patch must test the throttling stanza condition.'
-Assert-True ($pairingLimitPatch.Contains('iq_device_limit_condition_test()')) 'Packaged pairing patch must test the device-cap stanza condition.'
 foreach ($otpMakefile in @($nativeOtpMakefile, $crossOtpMakefile)) {
     foreach ($guiApplication in @('wx', 'debugger', 'et', 'observer', 'reltool')) {
         Assert-True ($otpMakefile -match "(?m)^CONFIGURE_ARGS \+= --without-$guiApplication$") "OTP recipe must explicitly disable $guiApplication."
@@ -714,6 +706,10 @@ $pairingSourceText = Read-TextNormalized (Join-Path $repositoryRoot 'src\mod_mae
 $redirectSourceText = Read-TextNormalized (Join-Path $repositoryRoot 'src\mod_maer_redirect.erl')
 Assert-True ($redirectSourceText.Contains('{308,')) 'HTTP redirect handler must use a permanent 308 response.'
 Assert-True ($redirectSourceText.Contains('https://xmpp.maer.fr/')) 'HTTP redirect handler must use the canonical HTTPS origin.'
+Assert-True ($pairingSourceText.Contains('xmpp:err_policy_violation()')) 'Pairing throttling must use policy-violation in the locked source.'
+Assert-True ($pairingSourceText.Contains('xmpp:err_resource_constraint()')) 'The device cap must retain resource-constraint in the locked source.'
+Assert-True ($pairingSourceText.Contains('iq_rate_limit_condition_test()')) 'The locked source must test the pairing throttling stanza condition.'
+Assert-True ($pairingSourceText.Contains('iq_device_limit_condition_test()')) 'The locked source must test the device-cap stanza condition.'
 Assert-True ($pairingSourceText.Contains('User = <<"admin">>')) 'Bootstrap transaction must create only the ACL-authorized admin localpart.'
 Assert-True ($pairingSourceText.Contains('verify_existing_admin(User, Host, Password)')) 'Bootstrap transaction must safely reconcile an existing admin with the same password.'
 Assert-True ($bootstrapAdminText.Contains('pong = net_adm:ping(N)')) 'Bootstrap must prove distribution connectivity before authentication RPCs.'
