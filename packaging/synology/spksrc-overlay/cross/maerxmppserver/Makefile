@@ -4,7 +4,7 @@
 
 PKG_NAME = maer-xmpp-server
 PKG_VERS = 26.07
-PKG_COMMIT = 5555478eb094c11a52b4329ac4e80f7e34069d00
+PKG_COMMIT = e98520dbd6f8715e0fdfcc431052dfd4c6d6b8cc
 PKG_EXT = tar.gz
 PKG_DIST_NAME = $(PKG_COMMIT).$(PKG_EXT)
 PKG_DIST_SITE = https://github.com/jeff-net52/MAER-XMPP-Server/archive

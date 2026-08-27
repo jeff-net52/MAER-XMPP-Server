@@ -35,12 +35,12 @@
   },
   "maer_xmpp_server": {
     "repository": "https://github.com/jeff-net52/MAER-XMPP-Server.git",
-    "commit": "5555478eb094c11a52b4329ac4e80f7e34069d00",
-    "archive": "https://github.com/jeff-net52/MAER-XMPP-Server/archive/5555478eb094c11a52b4329ac4e80f7e34069d00.tar.gz",
-    "bytes": 3274065,
-    "sha256": "8de6c2d3125cad234e058efafe61021346ae5b9e59064786f47f3db3c72ac7f5",
-    "sha1": "c8c2f160513210679862259ab97778312819ae10",
-    "md5": "15caf6f613181b41389d491f4a8386b9"
+    "commit": "e98520dbd6f8715e0fdfcc431052dfd4c6d6b8cc",
+    "archive": "https://github.com/jeff-net52/MAER-XMPP-Server/archive/e98520dbd6f8715e0fdfcc431052dfd4c6d6b8cc.tar.gz",
+    "bytes": 3272821,
+    "sha256": "db2e8557fce019deab9055421570297f773e64315dd7cec870cf67298ad12e9d",
+    "sha1": "32f6c303aa3c43a3dde80a9904d8770e61f1f091",
+    "md5": "165966b5d07f3ee5885237d77d1dfa51"
   },
   "assets": {
     "maer_mark_sha256": "266aef41e3d91d08923ee64d6cb2b0ee8aac375579a72532d5771cae123c1eb9",
