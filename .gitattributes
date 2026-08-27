@@ -1,0 +1,7 @@
+# Build and Erlang sources must remain usable from WSL/Linux after a Windows clone.
+*.sh text eol=lf
+*.erl text eol=lf
+*.hrl text eol=lf
+*.in text eol=lf
+configure text eol=lf
+configure.ac text eol=lf

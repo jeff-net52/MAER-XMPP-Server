@@ -1,0 +1,40 @@
+###
+### MAER Chat — fragment d'association sécurisée ejabberd 26.07
+###
+### À fusionner dans la configuration du virtual host xmpp.maer.fr. Ce fichier
+### public ne contient aucun certificat, compte, jeton ou autre secret.
+###
+
+hosts:
+  - xmpp.maer.fr
+
+### Le handler d'association doit être placé uniquement sur le listener HTTPS
+### public. Ne jamais le monter sur le listener d'administration (5280).
+listen:
+  -
+    port: 5443
+    ip: "::"
+    module: ejabberd_http
+    tls: true
+    request_handlers:
+      /maer-pairing: mod_maer_pairing
+
+### Les valeurs par défaut ci-dessous appliquent le contrat v1 : session de
+### cinq minutes, jeton de trente jours, dérive d'horloge de trente secondes,
+### dix sessions actives par IP et cent appareils par compte.
+modules:
+  mod_maer_pairing: {}
+
+### Les limites peuvent être réduites si nécessaire :
+###
+### modules:
+###   mod_maer_pairing:
+###     session_ttl: 300
+###     token_ttl: 2592000
+###     timestamp_skew: 30
+###     max_active_per_ip: 10
+###     max_active_global: 10000
+###     max_devices_per_account: 100
+###     http_requests_per_minute: 120
+###     http_requests_global_per_minute: 6000
+###     iq_requests_per_minute: 120

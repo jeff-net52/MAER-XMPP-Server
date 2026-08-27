@@ -36,8 +36,12 @@ Amont conservé : <https://github.com/processone/ejabberd>.
 - `config/ejabberd.multi-organization.yml.example` : base fonctionnelle pour
   plusieurs virtual hosts, à fusionner avec les certificats et listeners du
   modèle amont ;
+- `config/ejabberd.pairing.yml.example` : activation minimale du handler HTTPS
+  et de `mod_maer_pairing` sur le listener TLS 5443 ;
 - `docs/MULTI_ORGANIZATION.md` : modèle de cloisonnement et procédure
-  d’ajout/retrait d’un client.
+  d’ajout/retrait d’un client ;
+- `docs/PAIRING_SERVER.md` : architecture, garanties de sécurité, limites et
+  validation de l’association QR Windows/Android.
 
 Avant toute mise en production, partir d’un tag stable ejabberd, conserver le
 remote `upstream`, valider la configuration avec la version réellement
@@ -48,4 +52,5 @@ Le modèle rend les salons privés et réservés aux comptes locaux par défaut.
 listener HTTPS ejabberd, ou le proxy placé devant celui-ci, doit relier
 `/http-bind`, `/xmpp-websocket`, les documents `/.well-known/host-meta` et
 `/upload` aux handlers indiqués dans le modèle, sans remplacer les listeners
-client XMPP existants.
+client XMPP existants. L’API `/maer-pairing/v1` doit rester sur le listener TLS
+5443 et ne doit jamais être montée sur l’interface administrative 5280.

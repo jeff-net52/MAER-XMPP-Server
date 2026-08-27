@@ -2,6 +2,18 @@
 
 ## Non publié
 
+- ajout de `mod_maer_pairing`, pièce serveur du protocole d’association QR v1
+  entre MAER Chat Windows et Android : session HTTPS signée Ed25519,
+  approbation XMPP authentifiée et jeton OAuth limité à `sasl_auth` ;
+- ajout d’un registre Mnesia persistant des appareils liés, de leur liste et
+  révocation ciblée, avec fermeture immédiate des connexions suivies ;
+- ajout d’un hook OAuth best-effort dans `ejabberd_c2s` qui transmet uniquement
+  l’empreinte SHA-256 du jeton au registre d’appareils ;
+- ajout de limites de débit par IP, par compte et globales, nettoyage des
+  sessions/appareils expirés, validation stricte JSON/XML et tests de sécurité
+  ciblés OTP 27 ;
+- ajout du fragment de configuration TLS 5443 et du guide d’exploitation de
+  l’association ;
 - remplacement du domaine historique par le domaine canonique
   `xmpp.maer.fr` dans le catalogue et le modèle multi-organisation ;
 - ajout au modèle des modules BOSH et XEP-0156, avec les chemins publics

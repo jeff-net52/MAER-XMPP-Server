@@ -484,7 +484,18 @@ check_password_fun(<<"X-OAUTH2">>, #{lserver := LServer}) ->
     fun(User, _AuthzId, Token) ->
 	    case ejabberd_oauth:check_token(
 		   User, LServer, [<<"sasl_auth">>], Token) of
-		true -> {true, ejabberd_oauth};
+		true ->
+		    %% Expose only a one-way token fingerprint to local hooks.  MAER
+		    %% pairing uses it to bind a revocable device to this c2s process
+		    %% without retaining or publishing the OAuth bearer credential.
+		    TokenHash = crypto:hash(sha256, Token),
+		    %% Authentication must stay available if the optional consumer is
+		    %% absent, stopping, or faulty.  The hook runner already isolates
+		    %% callbacks; the outer catch also covers hook infrastructure faults.
+		    _ = catch ejabberd_hooks:run(
+				c2s_oauth_authenticated, LServer,
+				[self(), User, LServer, TokenHash]),
+		    {true, ejabberd_oauth};
 		_ -> {false, ejabberd_oauth}
 	    end
     end;
