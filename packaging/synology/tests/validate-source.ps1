@@ -310,6 +310,43 @@ function Validate-BuiltSpk {
                 )
                 Assert-True ($null -eq $markerHit) $(if ($markerHit) { "Payload contains forbidden marker '$($markerHit.Marker)' in '$($markerHit.Path)'." } else { 'Payload contains a forbidden build path, secret, or legacy-domain marker.' })
 
+                # The source and patch checks above prove what should be built;
+                # this atom is a compact attestation that the packaged BEAM was
+                # actually rebuilt after the strict 0600 runtime guard landed.
+                $smtpBeamPath = Join-Path $payloadRoot 'lib\ejabberd-26.07\ebin\maer_portal_smtp.beam'
+                Assert-True (Test-Path -LiteralPath $smtpBeamPath -PathType Leaf) 'SPK payload has no SMTP portal runtime module.'
+                if (Test-Path -LiteralPath $smtpBeamPath -PathType Leaf) {
+                    $smtpBeamBytes = [System.IO.File]::ReadAllBytes($smtpBeamPath)
+                    if ($smtpBeamBytes.Length -ge 2 -and
+                        $smtpBeamBytes[0] -eq 0x1f -and
+                        $smtpBeamBytes[1] -eq 0x8b) {
+                        $compressedBeam = [System.IO.MemoryStream]::new($smtpBeamBytes, $false)
+                        $expandedBeam = [System.IO.MemoryStream]::new()
+                        try {
+                            $gzipStream = [System.IO.Compression.GZipStream]::new(
+                                $compressedBeam,
+                                [System.IO.Compression.CompressionMode]::Decompress
+                            )
+                            try {
+                                $gzipStream.CopyTo($expandedBeam)
+                            }
+                            finally {
+                                $gzipStream.Dispose()
+                            }
+                            $smtpBeamBytes = $expandedBeam.ToArray()
+                        }
+                        catch {
+                            Add-Failure "Unable to decompress packaged SMTP runtime module: $($_.Exception.Message)"
+                        }
+                        finally {
+                            $expandedBeam.Dispose()
+                            $compressedBeam.Dispose()
+                        }
+                    }
+                    $smtpBeamContent = [System.Text.Encoding]::Latin1.GetString($smtpBeamBytes)
+                    Assert-True ($smtpBeamContent.Contains('password_file_info_available', [System.StringComparison]::Ordinal)) 'SPK SMTP runtime predates the exact-mode 0600 guard.'
+                }
+
                 $embeddedConfigPath = Join-Path $payloadRoot 'share\maerxmppserver\defaults\ejabberd.yml'
                 $sourceConfigPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\defaults\ejabberd.yml'
                 Assert-True (Test-Path -LiteralPath $embeddedConfigPath -PathType Leaf) 'SPK payload has no embedded default configuration.'
