@@ -30,7 +30,7 @@ xmpp.maer.fr`, accepter WebSocket et ne publier que ces préfixes :
 
 Créer également une règle HTTP publique sur `xmpp.maer.fr:80` vers
 `http://127.0.0.1:5080`. Ce backend dédié ne sert aucun contenu : il répond
-uniquement `308 Location: https://xmpp.maer.fr/`.
+uniquement `301 Location: https://xmpp.maer.fr/`.
 
 Ne jamais publier `/admin`, `/api` ou le port 5280. Remplacer les en-têtes
 d'adresse client à l'entrée du proxy au lieu de concaténer une valeur fournie

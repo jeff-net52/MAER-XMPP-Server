@@ -704,7 +704,8 @@ Assert-True ($certificateInstallerText.Contains('trap cleanup EXIT') -and $certi
 $bootstrapAdminText = Read-TextNormalized $bootstrapAdminPath
 $pairingSourceText = Read-TextNormalized (Join-Path $repositoryRoot 'src\mod_maer_pairing.erl')
 $redirectSourceText = Read-TextNormalized (Join-Path $repositoryRoot 'src\mod_maer_redirect.erl')
-Assert-True ($redirectSourceText.Contains('{308,')) 'HTTP redirect handler must use a permanent 308 response.'
+Assert-True ($redirectSourceText.Contains('{301,')) 'HTTP redirect handler must use an ejabberd-compatible permanent 301 response.'
+Assert-True (-not $redirectSourceText.Contains('{308,')) 'HTTP redirect handler must not use unsupported status 308 with ejabberd 26.07.'
 Assert-True ($redirectSourceText.Contains('https://xmpp.maer.fr/')) 'HTTP redirect handler must use the canonical HTTPS origin.'
 Assert-True ($pairingSourceText.Contains('xmpp:err_policy_violation()')) 'Pairing throttling must use policy-violation in the locked source.'
 Assert-True ($pairingSourceText.Contains('xmpp:err_resource_constraint()')) 'The device cap must retain resource-constraint in the locked source.'

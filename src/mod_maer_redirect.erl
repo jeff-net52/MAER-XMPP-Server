@@ -12,7 +12,8 @@
 -define(CANONICAL_ORIGIN, <<"https://xmpp.maer.fr/">>).
 
 process(_Path, _Request) ->
-    {308,
+    %% ejabberd 26.07 only has a reason phrase for 301, not 308.
+    {301,
      [{<<"Location">>, ?CANONICAL_ORIGIN},
       {<<"Cache-Control">>, <<"no-store">>},
       {<<"Content-Security-Policy">>,

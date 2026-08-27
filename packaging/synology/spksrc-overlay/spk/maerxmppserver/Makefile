@@ -5,7 +5,7 @@
 SPK_NAME = maerxmppserver
 GROUP = sc-maerxmppserver
 SPK_VERS = 26.07.0
-SPK_REV = 7
+SPK_REV = 8
 SPK_ICON = src/maerxmppserver.png
 
 DEPENDS = cross/maerxmppserver

@@ -93,7 +93,7 @@ validate_preinst()
             exit 1
         }
         if [ -n "${legacy_entry}" ]; then
-            echo "MAER XMPP Server 26.07.0-7 requires an empty package data directory." >&2
+            echo "MAER XMPP Server 26.07.0-8 requires an empty package data directory." >&2
             echo "Remove the previous package and its retained data, then install revision 7 cleanly." >&2
             exit 1
         fi
@@ -102,7 +102,7 @@ validate_preinst()
 
 validate_preupgrade()
 {
-    echo "In-place upgrades to MAER XMPP Server 26.07.0-7 are intentionally refused." >&2
+    echo "In-place upgrades to MAER XMPP Server 26.07.0-8 are intentionally refused." >&2
     echo "Export any required backup, uninstall the previous revision with its data, then perform a clean installation." >&2
     exit 1
 }
