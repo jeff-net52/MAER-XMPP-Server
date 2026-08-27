@@ -53,3 +53,14 @@ The DSM installation transcript is archived on the publication share as
 Revision 7 and all of its package data were removed before installing revision
 8. The one-shot root installation task was deleted after a successful run so it
 cannot execute again on its former schedule.
+
+## LAN-only administration
+
+DSM reverse proxy rule `MAER XMPP Admin LAN` exposes HTTPS port `8443` to the
+loopback-only ejabberd administration listener at `http://127.0.0.1:5280`.
+The attached DSM access-control profile `MAER XMPP Admin - LAN uniquement`
+allows `192.168.30.0/24` first and then denies every other source address.
+
+Live verification from the LAN returned `401` without credentials and `200`
+with the authenticated `admin@xmpp.maer.fr` account. The administrator password
+is intentionally not stored in this repository or report.
