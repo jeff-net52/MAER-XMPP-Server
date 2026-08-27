@@ -52,9 +52,11 @@ empêche qu'un ancien profil, une base de comptes ou des uploads hérités soien
 conservés silencieusement. Aucune procédure de restauration automatique n'est
 fournie dans cette révision.
 
-Le script ne réaffecte pas `HOME` : DSM fournit l'environnement du compte de
-paquet et Erlang y gère son cookie. Aucun mot de passe, cookie, jeton, secret
-TURN ou clé privée n'est présent dans le dépôt.
+Le service fixe `HOME` au répertoire d'état privé du paquet. Certaines voies de
+lancement DSM omettent cette variable ; Erlang ne peut alors ni localiser ni
+créer son cookie et interrompt son noyau avant le démarrage d'ejabberd. Aucun
+mot de passe, cookie, jeton, secret TURN ou clé privée n'est présent dans le
+dépôt.
 
 Le service refuse volontairement de démarrer tant qu'un PEM combiné lisible
 par le compte de paquet n'est pas installé à

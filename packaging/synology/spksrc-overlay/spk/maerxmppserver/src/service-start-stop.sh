@@ -104,7 +104,12 @@ assert_runtime_files()
 
 check_config()
 {
-    config_check_expression='case application:load(ejabberd) of ok -> ok; {error,{already_loaded,ejabberd}} -> ok; LoadError -> io:format(standard_error,"application_load_failed: ~p~n",[LoadError]), erlang:halt(1) end, case ejabberd_config:load() of ok -> erlang:halt(0); ConfigError -> io:format(standard_error,"configuration_invalid: ~p~n",[ConfigError]), erlang:halt(1) end.'
+    # ejabberd_config validates domains through jid:decode/1.  Merely loading
+    # the ejabberd application does not start xmpp, so jid's native library is
+    # still unloaded and every otherwise-valid domain fails with
+    # nif_not_loaded.  Start only the parser dependency tree in this short-lived
+    # validation VM; the ejabberd service itself remains stopped.
+    config_check_expression='case application:ensure_all_started(xmpp) of {ok,_} -> ok; {error,{already_started,xmpp}} -> ok; XmppError -> io:format(standard_error,"xmpp_start_failed: ~p~n",[XmppError]), erlang:halt(1) end, case application:load(ejabberd) of ok -> ok; {error,{already_loaded,ejabberd}} -> ok; LoadError -> io:format(standard_error,"application_load_failed: ~p~n",[LoadError]), erlang:halt(1) end, case ejabberd_config:load() of ok -> erlang:halt(0); ConfigError -> io:format(standard_error,"configuration_invalid: ~p~n",[ConfigError]), erlang:halt(1) end.'
 
     if ! "${EJABBERD_ERL}" -noshell -noinput -eval "${config_check_expression}"
     then

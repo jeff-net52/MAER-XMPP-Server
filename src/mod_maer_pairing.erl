@@ -126,7 +126,7 @@ is_strict_scram_sha256(T) ->
 
 -record(state,
 	{host                  :: binary(),
-	 sessions              :: ets:tid(),
+	 sessions              :: ets:tid() | undefined,
 	 rate_limits           :: ets:tid(),
 	 session_ttl           :: pos_integer(),
 	 token_ttl             :: pos_integer(),
@@ -190,29 +190,29 @@ mod_options(_Host) ->
 
 mod_doc() ->
     #{desc =>
-	  "MAER Chat device pairing over HTTPS and authenticated XMPP IQ. "
-	  "Pairing sessions are ephemeral and OAuth tokens are limited to "
-	  "the sasl_auth scope.",
+	  <<"MAER Chat device pairing over HTTPS and authenticated XMPP IQ. "
+	    "Pairing sessions are ephemeral and OAuth tokens are limited to "
+	    "the sasl_auth scope.">>,
       note => "added by MAER in 2026",
       opts =>
 	  [{session_ttl,
-	    #{value => "seconds", desc => "Lifetime of an uncompleted pairing."}},
+	    #{value => <<"seconds">>, desc => <<"Lifetime of an uncompleted pairing.">>}},
 	   {token_ttl,
-	    #{value => "seconds", desc => "Lifetime of the issued OAuth token."}},
+	    #{value => <<"seconds">>, desc => <<"Lifetime of the issued OAuth token.">>}},
 	   {timestamp_skew,
-	    #{value => "seconds", desc => "Maximum signed-request clock skew."}},
+	    #{value => <<"seconds">>, desc => <<"Maximum signed-request clock skew.">>}},
 	   {max_active_per_ip,
-	    #{value => "integer", desc => "Maximum active sessions per source IP."}},
+	    #{value => <<"integer">>, desc => <<"Maximum active sessions per source IP.">>}},
 	   {max_active_global,
-	    #{value => "integer", desc => "Maximum active sessions for this host."}},
+	    #{value => <<"integer">>, desc => <<"Maximum active sessions for this host.">>}},
 	   {max_devices_per_account,
-	    #{value => "integer", desc => "Maximum linked devices per account."}},
+	    #{value => <<"integer">>, desc => <<"Maximum linked devices per account.">>}},
 	   {http_requests_per_minute,
-	    #{value => "integer", desc => "Per-IP HTTP request limit per minute."}},
+	    #{value => <<"integer">>, desc => <<"Per-IP HTTP request limit per minute.">>}},
 	   {http_requests_global_per_minute,
-	    #{value => "integer", desc => "Global HTTP request limit per minute."}},
+	    #{value => <<"integer">>, desc => <<"Global HTTP request limit per minute.">>}},
 	   {iq_requests_per_minute,
-	    #{value => "integer", desc => "Per-account pairing IQ limit per minute."}}]}.
+	    #{value => <<"integer">>, desc => <<"Per-account pairing IQ limit per minute.">>}}]}.
 
 %%%----------------------------------------------------------------------
 %%% gen_server callbacks
@@ -1279,9 +1279,8 @@ invalidate_device({JIDBinary, DeviceID} = DeviceKey,
 	_ ->
 	    ets:select_delete(
 	      Sessions,
-	      [{#pair_session{status = approved, jid = JIDBinary,
-			       device_id = DeviceID, _ = '_'},
-		[], [true]}])
+	      [{{pair_session, '_', '_', '_', '_', '_', '_', '_', '_', '_',
+		 approved, JIDBinary, '_', '_', DeviceID}, [], [true]}])
     end,
     kick_device_connections(DeviceKey, State).
 
@@ -1334,12 +1333,17 @@ cleanup(#state{sessions = Sessions, rate_limits = RateLimits} = State) ->
 cleanup_sessions(Sessions, Now) ->
     ets:select_delete(
       Sessions,
-      [{#pair_session{expires_at = '$1', _ = '_'},
+      [{{pair_session, '_', '_', '_', '_', '_', '_', '_', '_', '$1',
+	  '_', '_', '_', '_', '_'},
 	[{'=<', '$1', Now}], [true]}]),
     ok.
 
 cleanup_devices(Now, State) ->
-    Pattern = #maer_pairing_device{_ = '_'},
+    %% Use the raw Mnesia tuple as a match pattern.  Record construction is
+    %% type-checked as a real value by Dialyzer, whereas '_' is only valid as
+    %% the wildcard understood by dirty_match_object/2.
+    Pattern = {maer_pairing_device, '_', '_', '_', '_', '_', '_', '_',
+	       '_', '_', '_', '_'},
     try mnesia:dirty_match_object(?DEVICE_TABLE, Pattern) of
 	Devices ->
 	    cleanup_device_records(Devices, Now, State)

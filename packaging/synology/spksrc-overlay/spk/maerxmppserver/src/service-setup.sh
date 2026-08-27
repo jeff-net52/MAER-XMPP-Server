@@ -6,6 +6,11 @@ MAER_PACKAGE_ROOT="/var/packages/maerxmppserver"
 MAER_VAR_DIR="${MAER_PACKAGE_ROOT}/var"
 MAER_DEFAULTS_DIR="${MAER_PACKAGE_ROOT}/target/share/maerxmppserver/defaults"
 
+# DSM's package service environment does not guarantee HOME.  Erlang's auth
+# service requires it even when the node cookie is created automatically; an
+# unset value terminates the kernel before ejabberd can write a useful log.
+HOME="${MAER_PACKAGE_ROOT}/home"
+
 CONFIG_DIR="${MAER_VAR_DIR}/config"
 LOGS_DIR="${MAER_VAR_DIR}/log"
 SPOOL_DIR="${MAER_VAR_DIR}/data"
@@ -27,6 +32,7 @@ LOG_FILE="${EJABBERD_LOG_PATH}"
 PID_FILE="${EJABBERD_PID_PATH}"
 
 export CONFIG_DIR LOGS_DIR SPOOL_DIR
+export HOME
 export EJABBERD_CONFIG_PATH EJABBERDCTL_CONFIG_PATH
 export EJABBERD_LOG_PATH EJABBERD_PID_PATH ERL_LIBS
 export ERLANG_NODE INET_DIST_INTERFACE ERL_EPMD_ADDRESS ERL_DIST_PORT
