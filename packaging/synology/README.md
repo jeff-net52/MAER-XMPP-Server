@@ -244,9 +244,12 @@ Cette barrière enregistre et bloque explicitement les régressions déjà renco
 - bannissement de tous les clients locaux partageant l'adresse de sortie du réseau ;
 - origine Electron `file://` ou absence de l'origine privilégiée exacte `maer-chat://app` ;
 - absence des modules, feuilles de style, scripts ou logo du portail/WebAdmin MAER ;
+- chemin UNC/WSL transmis à `tar.exe` avec le préfixe interne PowerShell
+  `Microsoft.PowerShell.Core\FileSystem::` au lieu du chemin fournisseur natif ;
 - patch serveur au format Git `a/`/`b/` alors que spksrc l'applique avec `patch -p0`, ce qui créerait un faux répertoire `b/` ou attendrait une saisie interactive ;
 - secret SMTP placé dans le YAML, imprimé par l'installeur ou créé avec un mode autre que `0600` ;
-- assistant DSM d'installation/migration absent du SPK final ;
+- assistant DSM d'installation/migration absent du SPK final, notamment si
+  `src/wizard` existe mais n'est pas déclaré par `WIZARDS_DIR` dans la recette spksrc ;
 - migration rev8 → rev9 qui remplace ou supprime la base de comptes au lieu de ne rafraîchir que le profil runtime.
 
 Le paquet ne doit être copié sur le NAS qu'après le message
@@ -333,6 +336,11 @@ modes des scripts :
 ```powershell
 pwsh -NoProfile -File packaging/synology/tests/validate-source.ps1 -SpkPath /chemin/vers/maerxmppserver_armada38x-7.1_26.07.0-9.spk
 ```
+
+Les chemins locaux, UNC et `\\wsl.localhost\...` sont normalisés vers leur
+`ProviderPath` natif avant l'appel à `tar.exe`. Le test de régression reproduit
+la forme qualifiée du fournisseur PowerShell sans exiger qu'une distribution
+WSL soit installée sur la machine de validation.
 
 Le choix `--disable-year2038` est intentionnel pour ce premier essai 32 bits
 sur glibc 2.26. Le support OTP 27 sur GCC 8.5 et ce compromis de temps 32 bits

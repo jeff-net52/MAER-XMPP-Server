@@ -6,8 +6,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$resolvedSpk = (Resolve-Path -LiteralPath $SpkPath).Path
-$validator = Join-Path $PSScriptRoot 'validate-source.ps1'
+. (Join-Path $PSScriptRoot 'path-utils.ps1')
+
+$resolvedSpk = Resolve-MaerFileSystemPath -LiteralPath $SpkPath -PathType Leaf
+$validator = Resolve-MaerFileSystemPath -LiteralPath (Join-Path $PSScriptRoot 'validate-source.ps1') -PathType Leaf
 
 & pwsh -NoProfile -File $validator -SpkPath $resolvedSpk
 if ($LASTEXITCODE -ne 0) {
