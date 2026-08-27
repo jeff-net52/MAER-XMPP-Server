@@ -1,0 +1,9 @@
+# Erlang/OTP only probes the narrow ncurses library names by default, while
+# spksrc intentionally ships ncursesw.  Probe the actual dependency instead of
+# introducing compatibility symlinks in the package.
+#
+--- erts/configure.orig
++++ erts/configure
+@@ -16149,1 +16149,1 @@
+-    termcap_libs="tinfo ncurses curses termcap termlib"
++    termcap_libs="tinfo ncursesw ncurses curses termcap termlib"

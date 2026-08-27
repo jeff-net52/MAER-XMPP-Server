@@ -1,0 +1,5 @@
+--- crypto/build.info.orig
++++ crypto/build.info
+@@ -118,1 +118,1 @@
+-GENERATE[buildinf.h]=../util/mkbuildinf.pl "$(CC) $(LIB_CFLAGS) $(CPPFLAGS_Q)" "$(PLATFORM)"
++GENERATE[buildinf.h]=../util/mkbuildinf.pl "MAER reproducible ARMv7 runtime" "$(PLATFORM)"

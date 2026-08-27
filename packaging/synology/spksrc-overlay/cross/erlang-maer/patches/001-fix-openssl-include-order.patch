@@ -1,0 +1,13 @@
+# Keep the staged OpenSSL 3 headers ahead of the Synology toolchain headers.
+# This mirrors the maintained SynoCommunity OTP cross-build fix.
+#
+--- lib/erl_interface/src/Makefile.in.orig
++++ lib/erl_interface/src/Makefile.in
+@@ -111,1 +111,1 @@
+-CFLAGS = @LIB_CFLAGS@ @DEFS@ $(WARNFLAGS) $(INCFLAGS) $(TYPE_FLAGS) \
++CFLAGS = -Iopenssl/include @LIB_CFLAGS@ @DEFS@ $(WARNFLAGS) $(INCFLAGS) $(TYPE_FLAGS) \
+--- erts/emulator/Makefile.in.orig
++++ erts/emulator/Makefile.in
+@@ -196,1 +196,1 @@
+-TYPE_FLAGS = @CFLAGS@
++TYPE_FLAGS = -Iopenssl/include @CFLAGS@

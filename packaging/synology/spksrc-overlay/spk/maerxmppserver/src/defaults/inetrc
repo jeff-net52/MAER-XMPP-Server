@@ -1,0 +1,6 @@
+%% SPDX-License-Identifier: GPL-2.0-only WITH OpenSSL-exception
+%% Copyright (C) 2026 MAER contributors
+
+{lookup,["file","native"]}.
+{host,{127,0,0,1},["localhost"]}.
+{file,resolv,"/etc/resolv.conf"}.

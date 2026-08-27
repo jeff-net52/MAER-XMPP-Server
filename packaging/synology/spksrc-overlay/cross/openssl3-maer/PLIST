@@ -1,0 +1,4 @@
+lnk:lib/libcrypto.so
+lib:lib/libcrypto.so.3
+lnk:lib/libssl.so
+lib:lib/libssl.so.3

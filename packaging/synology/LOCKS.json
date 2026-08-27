@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "package": {
+    "name": "maerxmppserver",
+    "display_name": "MAER XMPP Server",
+    "version": "26.07.0-2",
+    "arch": "armada38x",
+    "os_min_ver": "7.2-72806"
+  },
+  "spksrc": {
+    "repository": "https://github.com/SynoCommunity/spksrc.git",
+    "commit": "954871e356f7f990c179eb58af11c20d82872d8f"
+  },
+  "toolchain": {
+    "target": "armada38x-7.1",
+    "kernel": "3.10.108",
+    "glibc": "2.26",
+    "gcc": "8.5.0",
+    "triplet": "arm-unknown-linux-gnueabi",
+    "hard_float": true
+  },
+  "erlang_otp": {
+    "version": "27.3.4.16",
+    "archive": "https://github.com/erlang/otp/archive/refs/tags/OTP-27.3.4.16.tar.gz",
+    "bytes": 62355404,
+    "sha256": "6e00d897fa8cbfc8ee809eb1976531da43d415680e5fdd80012ffc20b5ea958f",
+    "sha1": "7823b6bf4a6b7e87de0236eb59b5c35da5632649",
+    "md5": "f8dfb6daa05002d3a22c94668d4db2bf"
+  },
+  "openssl": {
+    "version": "3.5.7",
+    "sha256": "a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8",
+    "sha1": "53d331880fbde8e6fe25870d5325a61201f6264d",
+    "md5": "36608cd5445f708d0c2200aea9682c35"
+  },
+  "maer_xmpp_server": {
+    "repository": "https://github.com/jeff-net52/MAER-XMPP-Server.git",
+    "commit": "444c56576df676b37437c3de490cd904d7bca840",
+    "archive": "https://github.com/jeff-net52/MAER-XMPP-Server/archive/444c56576df676b37437c3de490cd904d7bca840.tar.gz",
+    "bytes": 3113176,
+    "sha256": "a0daba5d4113895b9659087f1e540659d751c8dc52f7b4678dcf4d3241433cde",
+    "sha1": "c897bb1cb62c891e6a2c8417201632ebdda09937",
+    "md5": "fd7685d5463449f15df78080c107b212"
+  },
+  "assets": {
+    "maer_mark_sha256": "266aef41e3d91d08923ee64d6cb2b0ee8aac375579a72532d5771cae123c1eb9",
+    "copying_sha256": "8f0fc61b2b9ff3f4d7887a525100e786bedf1b39dde68f3831d363fda61818a1"
+  }
+}

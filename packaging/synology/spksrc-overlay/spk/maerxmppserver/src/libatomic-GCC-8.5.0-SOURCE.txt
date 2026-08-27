@@ -1,0 +1,36 @@
+libatomic.so.1.2.0 - GCC 8.5.0 source and license notice
+=========================================================
+
+This MAER XMPP Server package redistributes libatomic.so.1.2.0 from the
+Synology Armada 38x DSM 7.1 cross-development toolchain. The library is part
+of GCC 8.5.0 and is licensed under GNU GPL version 3 with the GCC Runtime
+Library Exception, version 3.1.
+
+The complete license texts are installed beside this notice as:
+
+  GPL-3.0.txt
+  GCC-Runtime-Library-Exception.txt
+
+Binary provenance
+-----------------
+
+Synology toolchain archive:
+https://global.synologydownload.com/download/ToolChain/toolchain/7.1-42661/Marvell%20Armada%2038x%20Linux%203.10.108/armada38x-gcc850_glibc226_hard-GPL.txz
+
+Archive MD5:
+89f00948dedf2a6ea3e7f9bfc3ddc671
+
+Corresponding GCC source
+------------------------
+
+GNU GCC 8.5.0 source archive:
+https://ftp.gnu.org/gnu/gcc/gcc-8.5.0/gcc-8.5.0.tar.xz
+
+Archive SHA-256:
+d308841a511bb830a6100397b0042db24ce11f642dab6ea6ee44842e5325ed50
+
+The reproducible MAER package recipe and the exact Synology toolchain lock are
+published with the SPK source under packaging/synology. Anyone redistributing
+the SPK must preserve this notice and provide equivalent no-charge network
+access to this corresponding source for as long as that binary distribution
+is offered.

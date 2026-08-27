@@ -1,0 +1,5 @@
+--- erts/emulator/Makefile.in.orig
++++ erts/emulator/Makefile.in
+@@ -588,1 +588,1 @@
+-TMPVAR := $(shell LANG=C $(PERL) utils/make_compiler_flags -o $(TTF_DIR)/erl_compile_flags.h -f CONFIG_H "$(ERL_TOP)/erts/$(TARGET)/config.h" -v CFLAGS "$(CFLAGS)" -v LDFLAGS "$(LDFLAGS)")
++TMPVAR := $(shell LANG=C $(PERL) utils/make_compiler_flags -o $(TTF_DIR)/erl_compile_flags.h -v CONFIG_H "MAER reproducible ARMv7 runtime" -v CFLAGS "MAER reproducible ARMv7 runtime" -v LDFLAGS "/var/packages/maerxmppserver/target/lib")
