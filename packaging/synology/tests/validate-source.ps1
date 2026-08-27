@@ -719,12 +719,12 @@ foreach ($shellPath in @($serviceSetupPath, $serviceScriptPath, $uploadMonitorPa
     Assert-LfShellFile $shellPath
 }
 
-$shellCommand = Get-Command sh -ErrorAction SilentlyContinue
+$shellCommand = Get-Command bash -ErrorAction SilentlyContinue
 $shellExecutable = if ($shellCommand) { $shellCommand.Source } else { $null }
 if (-not $shellExecutable) {
     foreach ($candidate in @(
-        'C:\Program Files\Git\bin\sh.exe',
-        'C:\Program Files\Git\usr\bin\sh.exe'
+        'C:\Program Files\Git\bin\bash.exe',
+        'C:\Program Files\Git\usr\bin\bash.exe'
     )) {
         if (Test-Path -LiteralPath $candidate -PathType Leaf) {
             $shellExecutable = $candidate
@@ -775,20 +775,30 @@ if ($shellExecutable) {
     }
 }
 else {
-    Write-Warning 'sh is unavailable; shell syntax and behavior tests were skipped.'
+    Write-Warning 'bash is unavailable; shell syntax and behavior tests were skipped.'
 }
 
 $isWindowsHost = ($env:OS -eq 'Windows_NT')
 $wslCommand = if ($isWindowsHost) { Get-Command wsl.exe -ErrorAction SilentlyContinue } else { $null }
 if ($isWindowsHost -and $wslCommand) {
-    Push-Location $repositoryRoot
-    try {
-        foreach ($linuxTest in @('packaging/synology/tests/test-certificate-sync.sh', 'packaging/synology/tests/test-bootstrap-admin.sh')) {
-            & $wslCommand.Source -d Ubuntu-26.04 -- /usr/bin/bash $linuxTest
-            if ($LASTEXITCODE -ne 0) { Add-Failure "Required WSL release test failed: $linuxTest" }
+    $wslDistributions = @(& $wslCommand.Source --list --quiet 2>$null) | ForEach-Object { $_.Trim([char]0).Trim() } | Where-Object { $_ }
+    $hasRequiredWsl = $LASTEXITCODE -eq 0 -and $wslDistributions -contains 'Ubuntu-26.04'
+    if ($hasRequiredWsl) {
+        Push-Location $repositoryRoot
+        try {
+            foreach ($linuxTest in @('packaging/synology/tests/test-certificate-sync.sh', 'packaging/synology/tests/test-bootstrap-admin.sh')) {
+                & $wslCommand.Source -d Ubuntu-26.04 -- /usr/bin/bash $linuxTest
+                if ($LASTEXITCODE -ne 0) { Add-Failure "Required WSL release test failed: $linuxTest" }
+            }
         }
+        finally { Pop-Location }
     }
-    finally { Pop-Location }
+    elseif ($env:CI) {
+        Write-Warning 'WSL Ubuntu-26.04 is unavailable on this Windows CI runner; native Linux matrix tests provide the required release coverage.'
+    }
+    else {
+        Add-Failure 'WSL Ubuntu-26.04 is required for certificate/bootstrap release tests.'
+    }
 }
 elseif ($isWindowsHost) {
     Add-Failure 'WSL Ubuntu-26.04 is required for certificate/bootstrap release tests.'
