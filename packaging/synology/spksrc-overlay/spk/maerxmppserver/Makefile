@@ -39,6 +39,10 @@ SERVICE_SETUP = src/service-setup.sh
 SSS_SCRIPT = src/service-start-stop.sh
 FWPORTS = src/maerxmppserver.sc
 NO_SERVICE_SHORTCUT = yes
+# spksrc does not discover src/wizard implicitly.  Declaring the directory is
+# what makes its install/upgrade files join the DSM 7 default uninstall wizard
+# in the final SPK's WIZARD_UIFILES directory.
+WIZARDS_DIR = src/wizard
 
 NATIVE_ERLANG_BIN_DIR = $(abspath $(WORK_DIR)/../../../native/erlang-maer/work-native/install/usr/local/bin)
 SPKSRC_BUILD_ROOT = $(abspath $(WORK_DIR)/../../..)
