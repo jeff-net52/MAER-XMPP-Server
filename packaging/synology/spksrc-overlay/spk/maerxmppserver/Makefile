@@ -5,7 +5,7 @@
 SPK_NAME = maerxmppserver
 GROUP = sc-maerxmppserver
 SPK_VERS = 26.07.0
-SPK_REV = 4
+SPK_REV = 5
 SPK_ICON = src/maerxmppserver.png
 
 DEPENDS = cross/maerxmppserver
@@ -132,7 +132,9 @@ maerxmppserver_runtime_finalize:
 	rm -f $(STAGING_DIR)/lib/erlang/erts-*/bin/run_erl $(STAGING_DIR)/lib/erlang/erts-*/bin/to_erl
 	rm -f $(STAGING_DIR)/lib/erlang/erts-*/bin/typer $(STAGING_DIR)/lib/erlang/erts-*/bin/yielding_c_fun
 	rm -f $(STAGING_DIR)/lib/erlang/lib/crypto-*/priv/lib/otp_test_engine.so
-	rm -f $(STAGING_DIR)/lib/erlang/lib/crypto-*/priv/lib/crypto_callback.so
+	# crypto_callback.so is the dynamic OpenSSL loader used by crypto.so when
+	# OTP is built with --enable-dynamic-ssl-lib.  It is runtime-critical.
+	test -f $(STAGING_DIR)/lib/erlang/lib/crypto-*/priv/lib/crypto_callback.so
 	rm -f $(STAGING_DIR)/lib/erlang/lib/diameter-*/bin/diameterc
 	rm -f $(STAGING_DIR)/lib/erlang/lib/snmp-*/bin/snmpc
 	find $(STAGING_DIR) -depth -type d -empty -delete

@@ -10,7 +10,7 @@ sur un NAS.
 |---|---|
 | Identifiant | `maerxmppserver` |
 | Nom affiché | `MAER XMPP Server` |
-| Version SPK | `26.07.0-4` |
+| Version SPK | `26.07.0-5` |
 | Architecture | `armada38x` uniquement |
 | DSM minimal | `7.2-72806` |
 | Compte de service | `sc-maerxmppserver`, jamais `root` |
@@ -239,7 +239,7 @@ make -C spk/maerxmppserver arch-armada38x-7.1
 ```
 
 Le SPK attendu est alors
-`packages/maerxmppserver_armada38x-7.1_26.07.0-4.spk`, à la racine du checkout
+`packages/maerxmppserver_armada38x-7.1_26.07.0-5.spk`, à la racine du checkout
 `spksrc`.
 
 Une seconde exécution de la même commande réassemble le paquet. Son SHA-256
@@ -250,7 +250,7 @@ Après le build, valider le SPK réel, y compris `INFO`, `conf/privilege` et les
 modes des scripts :
 
 ```powershell
-pwsh -NoProfile -File packaging/synology/tests/validate-source.ps1 -SpkPath /chemin/vers/maerxmppserver_armada38x-7.1_26.07.0-4.spk
+pwsh -NoProfile -File packaging/synology/tests/validate-source.ps1 -SpkPath /chemin/vers/maerxmppserver_armada38x-7.1_26.07.0-5.spk
 ```
 
 Le choix `--disable-year2038` est intentionnel pour ce premier essai 32 bits

@@ -217,10 +217,11 @@ function Validate-BuiltSpk {
                 $_ -match '^lib/lib(?:formw|menuw|panelw)\.so' -or
                 $_ -match '^bin/(?:clear|infocmp|tabs|tic|toe|tput|tset|reset|captoinfo|infotocap|openssl|sqlite3|ct_run|dialyzer|erlc|escript|run_erl|to_erl|typer)$' -or
                 $_ -match '^lib/erlang/lib/(?:diameter|snmp)-[^/]+/bin/(?:diameterc|snmpc)$' -or
-                $_ -match '(?:^|/)otp_test_engine\.so$' -or
-                $_ -match '(?:^|/)crypto_callback\.so$'
+                $_ -match '(?:^|/)otp_test_engine\.so$'
             })
             Assert-True ($forbiddenPayloadPaths.Count -eq 0) ('SPK payload contains runtime-inutile or secret-bearing paths: ' + (($forbiddenPayloadPaths | Select-Object -First 8) -join ', '))
+            $cryptoCallbacks = @($normalizedPayloadListing | Where-Object { $_ -match '^lib/erlang/lib/crypto-[^/]+/priv/lib/crypto_callback\.so$' })
+            Assert-True ($cryptoCallbacks.Count -eq 1) 'SPK payload must contain exactly one OTP dynamic OpenSSL crypto_callback.so loader.'
             $publicPemPaths = @($normalizedPayloadListing | Where-Object { $_ -match '\.pem$' })
             Assert-True ($publicPemPaths.Count -eq 1 -and $publicPemPaths[0] -match '^lib/pkix-[^/]+/priv/cacert\.pem$') 'SPK payload must contain exactly the allowlisted PKIX public CA PEM.'
 
