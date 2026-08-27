@@ -207,7 +207,6 @@ function Validate-BuiltSpk {
                 $_ -match '\.(?:a|la|key)$' -or
                 $_ -match '\.(?:erl|hrl|c|h|o|src)$' -or
                 $_ -match '(?:^|/)(?:README|HOWTO)[^/]*$' -or
-                $_ -match '(?i)(?:^|/)[^/]*example[^/]*$' -or
                 ($_ -match '\.pem$' -and $_ -notmatch '^lib/pkix-[^/]+/priv/cacert\.pem$') -or
                 $_ -match '^etc(?:/|$)' -or
                 $_ -match '^share/(?:terminfo|tabset)(?:/|$)' -or
@@ -222,6 +221,8 @@ function Validate-BuiltSpk {
             Assert-True ($forbiddenPayloadPaths.Count -eq 0) ('SPK payload contains runtime-inutile or secret-bearing paths: ' + (($forbiddenPayloadPaths | Select-Object -First 8) -join ', '))
             $cryptoCallbacks = @($normalizedPayloadListing | Where-Object { $_ -match '^lib/erlang/lib/crypto-[^/]+/priv/lib/crypto_callback\.so$' })
             Assert-True ($cryptoCallbacks.Count -eq 1) 'SPK payload must contain exactly one OTP dynamic OpenSSL crypto_callback.so loader.'
+            $httpdRuntimeModules = @($normalizedPayloadListing | Where-Object { $_ -match '^lib/erlang/lib/inets-[^/]+/ebin/httpd_example\.beam$' })
+            Assert-True ($httpdRuntimeModules.Count -eq 1) 'SPK payload must retain the inets httpd_example.beam runtime module required by ejabberd.'
             $publicPemPaths = @($normalizedPayloadListing | Where-Object { $_ -match '\.pem$' })
             Assert-True ($publicPemPaths.Count -eq 1 -and $publicPemPaths[0] -match '^lib/pkix-[^/]+/priv/cacert\.pem$') 'SPK payload must contain exactly the allowlisted PKIX public CA PEM.'
 
@@ -405,6 +406,7 @@ Assert-True ($spkMakefile -match 'beam_lib:strip_files\(Files\)') 'Runtime final
 Assert-True ($spkMakefile -match 'patchelf --force-rpath --set-rpath "\$\(RUNTIME_RPATH\)"') 'Runtime finalization must canonicalize every dynamic ELF RPATH.'
 Assert-Equal (Get-MakeValue $spkMakefile 'OTP_DEVELOPMENT_APPLICATIONS') 'common_test dialyzer edoc erl_interface eunit' 'Runtime pruning must remove the deterministic OTP development-application allowlist.'
 Assert-True ($spkMakefile -match "find \$\(STAGING_DIR\) -type f -name '\*\.orig' -delete") 'Runtime finalization must delete backup .orig files.'
+Assert-True (-not ($spkMakefile -match "-iname '\*example\*'")) 'Runtime finalization must not prune OTP runtime modules merely because their filename contains example.'
 Assert-True ($spkMakefile -match "-name '\*\.key'") 'Runtime finalization must reject private-key files.'
 Assert-True ($spkMakefile -match [regex]::Escape('lib/pkix-*/priv/cacert.pem')) 'Runtime finalization must allowlist only the PKIX public CA PEM.'
 Assert-True ($spkMakefile -match [regex]::Escape('-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY-----')) 'Runtime finalization must reject embedded private-key PEM blocks.'

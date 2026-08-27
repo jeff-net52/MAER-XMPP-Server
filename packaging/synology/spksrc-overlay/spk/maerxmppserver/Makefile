@@ -5,7 +5,7 @@
 SPK_NAME = maerxmppserver
 GROUP = sc-maerxmppserver
 SPK_VERS = 26.07.0
-SPK_REV = 5
+SPK_REV = 6
 SPK_ICON = src/maerxmppserver.png
 
 DEPENDS = cross/maerxmppserver
@@ -100,7 +100,7 @@ maerxmppserver_runtime_finalize:
 	find $(STAGING_DIR) -depth -type d \( -name src -o -name c_src -o -name examples -o -name doc -o -name man -o -name include -o -name proper_ext -o -name emacs \) -exec rm -rf {} +
 	find $(STAGING_DIR) -type f \( -name '*.a' -o -name '*.la' \) -delete
 	find $(STAGING_DIR) -type f \( -name '*.erl' -o -name '*.hrl' -o -name '*.c' -o -name '*.h' -o -name '*.o' -o -name '*.src' \) -delete
-	find $(STAGING_DIR) -type f \( -iname 'README*' -o -iname 'HOWTO*' -o -iname '*example*' \) -delete
+	find $(STAGING_DIR) -type f \( -iname 'README*' -o -iname 'HOWTO*' \) -delete
 	rm -rf $(STAGING_DIR)/etc
 	rm -rf $(STAGING_DIR)/lib/erlang/usr
 	rm -rf $(STAGING_DIR)/lib/erlang/misc
@@ -135,6 +135,7 @@ maerxmppserver_runtime_finalize:
 	# crypto_callback.so is the dynamic OpenSSL loader used by crypto.so when
 	# OTP is built with --enable-dynamic-ssl-lib.  It is runtime-critical.
 	test -f $(STAGING_DIR)/lib/erlang/lib/crypto-*/priv/lib/crypto_callback.so
+	test -f $(STAGING_DIR)/lib/erlang/lib/inets-*/ebin/httpd_example.beam
 	rm -f $(STAGING_DIR)/lib/erlang/lib/diameter-*/bin/diameterc
 	rm -f $(STAGING_DIR)/lib/erlang/lib/snmp-*/bin/snmpc
 	find $(STAGING_DIR) -depth -type d -empty -delete
@@ -158,7 +159,7 @@ maerxmppserver_runtime_finalize:
 	test -z "$$(find $(STAGING_DIR) -type f -name '*.orig' -print -quit)"
 	test -z "$$(find $(STAGING_DIR) -type f \( -name '*.a' -o -name '*.la' \) -print -quit)"
 	test -z "$$(find $(STAGING_DIR) -type f \( -name '*.erl' -o -name '*.hrl' -o -name '*.c' -o -name '*.h' -o -name '*.o' -o -name '*.src' \) -print -quit)"
-	test -z "$$(find $(STAGING_DIR) -type f \( -iname 'README*' -o -iname 'HOWTO*' -o -iname '*example*' \) -print -quit)"
+	test -z "$$(find $(STAGING_DIR) -type f \( -iname 'README*' -o -iname 'HOWTO*' \) -print -quit)"
 	test -z "$$(find $(STAGING_DIR) -type f -name '*.key' -print -quit)"
 	test "$$(find $(STAGING_DIR) -type f -name '*.pem' -print | wc -l)" -eq 1
 	test -f $(STAGING_DIR)/lib/pkix-*/priv/cacert.pem
