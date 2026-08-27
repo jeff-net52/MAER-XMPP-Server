@@ -7,7 +7,10 @@ on:
       - COPYING
       - maer/config/ejabberd.pairing.yml.example
       - maer/docs/PAIRING_SERVER.md
+      - priv/maer_portal/**
+      - src/maer_portal_smtp.erl
       - src/mod_maer_pairing.erl
+      - src/mod_maer_portal.erl
       - src/mod_maer_redirect.erl
       - packaging/synology/**
       - .github/workflows/synology-package.yml
@@ -17,7 +20,10 @@ on:
       - COPYING
       - maer/config/ejabberd.pairing.yml.example
       - maer/docs/PAIRING_SERVER.md
+      - priv/maer_portal/**
+      - src/maer_portal_smtp.erl
       - src/mod_maer_pairing.erl
+      - src/mod_maer_portal.erl
       - src/mod_maer_redirect.erl
       - packaging/synology/**
       - .github/workflows/synology-package.yml
@@ -41,6 +47,9 @@ jobs:
       - name: Validate source contract
         shell: pwsh
         run: ./packaging/synology/tests/validate-source.ps1
+      - name: Validate account portal contract
+        shell: pwsh
+        run: ./packaging/synology/tests/test-maer-portal.ps1
       - name: Validate Windows and Linux checkout profiles
         shell: pwsh
         run: ./packaging/synology/tests/test-clean-checkouts.ps1

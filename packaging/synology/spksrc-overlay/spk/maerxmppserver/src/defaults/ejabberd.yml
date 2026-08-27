@@ -54,6 +54,7 @@ c2s_tls_compression: false
 # Native clients that do not send an Origin header remain supported by ejabberd.
 websocket_origin:
   - https://xmpp.maer.fr
+  - maer-chat://app
 
 # Only the DSM reverse proxy on loopback may supply X-Forwarded-For.  The proxy
 # must replace, never append to, any client-provided forwarding header.
@@ -102,14 +103,14 @@ listen:
       - cipher_server_preference
       - no_compression
     custom_headers:
-      Access-Control-Allow-Origin: https://xmpp.maer.fr
-      Content-Security-Policy: "default-src 'none'; frame-ancestors 'none'"
+      Access-Control-Allow-Origin: maer-chat://app
       Referrer-Policy: no-referrer
       Strict-Transport-Security: "max-age=31536000"
       Vary: Origin
       X-Content-Type-Options: nosniff
       X-Frame-Options: DENY
     request_handlers:
+      /account: mod_maer_portal
       /maer-pairing: mod_maer_pairing
       /http-bind: mod_bosh
       /xmpp-websocket: ejabberd_http_ws
@@ -129,6 +130,14 @@ acl:
     ip:
       - 127.0.0.0/8
       - ::1/128
+  # Authentication failures arriving from the trusted LAN/hairpin address
+  # must not ban every local client behind the same gateway.  WAN addresses
+  # deliberately do not match this ACL and remain protected by mod_fail2ban.
+  maer_fail2ban_exempt:
+    ip:
+      - 127.0.0.0/8
+      - ::1/128
+      - 192.168.30.0/24
 
 access_rules:
   local:
@@ -137,6 +146,9 @@ access_rules:
     allow: all
   configure:
     allow: admin
+  maer_fail2ban_whitelist:
+    allow: maer_fail2ban_exempt
+    deny: all
   maer_private_muc:
     allow: local
   pubsub_createnode:
@@ -181,7 +193,8 @@ modules:
   mod_carboncopy: {}
   mod_client_state: {}
   mod_disco: {}
-  mod_fail2ban: {}
+  mod_fail2ban:
+    access: maer_fail2ban_whitelist
   mod_host_meta:
     bosh_service_url: https://xmpp.maer.fr/http-bind
     websocket_url: wss://xmpp.maer.fr/xmpp-websocket
@@ -192,7 +205,7 @@ modules:
     file_mode: "0600"
     dir_mode: "0700"
     custom_headers:
-      Access-Control-Allow-Origin: https://xmpp.maer.fr
+      Access-Control-Allow-Origin: maer-chat://app
       Access-Control-Allow-Methods: GET,HEAD,PUT,OPTIONS
       Access-Control-Allow-Headers: Content-Type
   mod_http_upload_quota:
@@ -202,6 +215,17 @@ modules:
   mod_last:
     db_type: sql
   mod_maer_pairing: {}
+  # Email features remain fail-closed until the operator provisions the
+  # server-side 0600 password file.  Credentials are never embedded in this
+  # YAML or returned to a browser.
+  mod_maer_portal:
+    database_path: /var/packages/maerxmppserver/var/data/maer-portal.sqlite
+    public_base_url: https://xmpp.maer.fr/account
+    smtp_host: smtp-zose.yulpa.io
+    smtp_port: 465
+    smtp_username: no-reply@maer.fr
+    smtp_password_file: /var/packages/maerxmppserver/var/config/smtp-password
+    smtp_from: no-reply@maer.fr
   mod_mam:
     db_type: sql
     assume_mam_usage: true

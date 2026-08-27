@@ -72,7 +72,11 @@ maerxmppserver_copy_runtime: copy_target
 	install -m 755 src/upload-usage-check.sh $(STAGING_DIR)/bin/maer-upload-usage-check
 	cp -a $(foreach application,$(SERVER_RUNTIME_APPLICATIONS),$(STAGING_INSTALL_PREFIX)/lib/$(application)-*) $(STAGING_DIR)/lib/
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/ebin/mod_maer_pairing.beam
+	test -f $(STAGING_DIR)/lib/ejabberd-26.07/ebin/mod_maer_portal.beam
+	test -f $(STAGING_DIR)/lib/ejabberd-26.07/ebin/maer_portal_smtp.beam
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/ebin/mod_maer_redirect.beam
+	test -f $(STAGING_DIR)/lib/ejabberd-26.07/priv/maer_portal/portal.css
+	test -f $(STAGING_DIR)/lib/ejabberd-26.07/priv/maer_portal/portal.js
 
 .PHONY: maerxmppserver_service_finalize
 maerxmppserver_service_finalize:
@@ -152,7 +156,11 @@ maerxmppserver_runtime_finalize:
 	test -f $(STAGING_DIR)/lib/libncursesw.so.6.6
 	test -f $(STAGING_DIR)/lib/libatomic.so.1.2.0
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/ebin/mod_maer_pairing.beam
+	test -f $(STAGING_DIR)/lib/ejabberd-26.07/ebin/mod_maer_portal.beam
+	test -f $(STAGING_DIR)/lib/ejabberd-26.07/ebin/maer_portal_smtp.beam
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/ebin/mod_maer_redirect.beam
+	test -f $(STAGING_DIR)/lib/ejabberd-26.07/priv/maer_portal/portal.css
+	test -f $(STAGING_DIR)/lib/ejabberd-26.07/priv/maer_portal/portal.js
 	test -f $(STAGING_DIR)/share/maerxmppserver/defaults/ejabberd.yml
 	test -f $(STAGING_DIR)/share/maerxmppserver/licenses/GPL-3.0.txt
 	test -f $(STAGING_DIR)/share/maerxmppserver/licenses/GCC-Runtime-Library-Exception.txt

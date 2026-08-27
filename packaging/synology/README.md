@@ -120,6 +120,54 @@ Le signalement Jingle audio/vidéo transite déjà par XMPP, mais les appels hor
 LAN nécessiteront un service TURN séparé avec secrets éphémères avant d'être
 annoncés aux clients.
 
+## Portail utilisateur et SMTP
+
+Le même listener TLS local sert le portail autonome sur `/account`. Le module
+ne réutilise pas le WebAdmin et n'expose aucune commande d'administration. Une
+connexion saisie sous forme d'identifiant court est toujours résolue sur
+`@xmpp.maer.fr`. Le portail permet d'associer puis de vérifier une adresse
+email, de demander un changement de mot de passe confirmé par email et de
+conserver les préférences appels audio, appels vidéo, partage d'écran, MAER
+Assistance et gestionnaire de mots de passe. Ces préférences ne déclenchent
+aucune facturation et ne promettent pas à elles seules la disponibilité d'un
+service côté client.
+
+Les profils et les empreintes SHA-256 des jetons sont conservés dans la base
+séparée `/var/packages/maerxmppserver/var/data/maer-portal.sqlite`. Les sessions
+restent en mémoire, expirent et sont révoquées après un changement de mot de
+passe. Les liens reçus par email placent leur jeton après `#` : les requêtes et
+les journaux du reverse proxy ne contiennent donc pas le secret. Tous les POST
+exigent l'origine canonique, un cookie SameSite/HttpOnly/Secure et un jeton
+CSRF à usage borné. Les tentatives de connexion et les envois email sont
+limités par IP et par compte.
+
+Sans SMTP, la connexion et les préférences fonctionnent mais les actions email
+restent désactivées. Pour les activer, l'opérateur doit :
+
+1. créer, avec une entrée interactive qui n'apparaît ni dans l'historique ni
+   dans la ligne de commande, le fichier
+   `/var/packages/maerxmppserver/var/config/smtp-password` ;
+2. l'attribuer à `sc-maerxmppserver:sc-maerxmppserver`, mode `0600`, sans lien
+   symbolique ;
+3. renseigner sous `modules.mod_maer_portal` dans le `ejabberd.yml` installé :
+
+   ```yaml
+   smtp_host: smtp-zose.yulpa.io
+   smtp_port: 465
+   smtp_username: no-reply@maer.fr
+   smtp_password_file: /var/packages/maerxmppserver/var/config/smtp-password
+   smtp_from: no-reply@maer.fr
+   ```
+
+4. redémarrer le paquet et tester séparément l'association d'adresse puis le
+   changement de mot de passe.
+
+Le transport SMTP accepte uniquement TLS implicite, vérifie la chaîne publique
+et le nom du serveur, et ne journalise ni identifiants, ni mots de passe, ni
+jetons. Un relais STARTTLS sur 587 doit être placé derrière un relais TLS
+implicite local ou remplacé par un service offrant le port 465 ; il ne faut pas
+affaiblir cette vérification dans la configuration du paquet.
+
 ## Provenance reproductible
 
 [`LOCKS.json`](LOCKS.json) verrouille :

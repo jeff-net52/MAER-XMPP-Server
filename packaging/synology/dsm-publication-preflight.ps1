@@ -47,7 +47,7 @@ function Send-HttpRequest {
     param(
         [string] $Method,
         [string] $Url,
-        [string] $Origin = "https://$Domain",
+        [string] $Origin = 'maer-chat://app',
         [AllowNull()] [string] $Body = $null,
         [string] $ContentType = 'application/octet-stream'
     )
@@ -431,6 +431,7 @@ Test-ObsoleteTlsRejection
 Test-RetiredDomainAbsent
 
 $httpsChecks = @(
+    [pscustomobject]@{ Method = 'GET'; Path = '/account/'; Status = 200 },
     [pscustomobject]@{ Method = 'GET'; Path = '/.well-known/host-meta'; Status = 200 },
     [pscustomobject]@{ Method = 'GET'; Path = '/.well-known/host-meta.json'; Status = 200 },
     [pscustomobject]@{ Method = 'OPTIONS'; Path = '/http-bind'; Status = 200 },
@@ -463,12 +464,18 @@ foreach ($check in $httpsChecks) {
                     Add-Failure "$($check.Path) leaks the private backend port 5443."
                 }
             }
+            if ($check.Path -eq '/account/' -and [int]$response.StatusCode -eq 200) {
+                $portalHtml = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                if (-not $portalHtml.Contains('Espace compte') -or
+                    -not $portalHtml.Contains('/account/assets/logo.png')) {
+                    Add-Failure 'The public account portal did not return the branded login page.'
+                }
+            }
             $origin = Get-HeaderValue -Response $response -Name 'Access-Control-Allow-Origin'
-            if ($origin -ne "https://$Domain") {
+            if ($origin -ne 'maer-chat://app') {
                 Add-Failure "$($check.Path) has an unexpected CORS origin: '$origin'"
             }
             $expectedHeaders = [ordered]@{
-                'Content-Security-Policy' = "default-src 'none'; frame-ancestors 'none'"
                 'Referrer-Policy' = 'no-referrer'
                 'Strict-Transport-Security' = 'max-age=31536000'
                 'Vary' = 'Origin'
@@ -479,6 +486,13 @@ foreach ($check in $httpsChecks) {
                 $actualHeader = Get-HeaderValue -Response $response -Name $requiredHeader
                 if ($actualHeader -cne $expectedHeaders[$requiredHeader]) {
                     Add-Failure "$($check.Path) has unexpected '$requiredHeader': '$actualHeader' (expected '$($expectedHeaders[$requiredHeader])')."
+                }
+            }
+            if ($check.Path -eq '/account/') {
+                $portalCsp = Get-HeaderValue -Response $response -Name 'Content-Security-Policy'
+                $expectedPortalCsp = "default-src 'none'; img-src 'self'; style-src 'self'; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+                if ($portalCsp -cne $expectedPortalCsp) {
+                    Add-Failure "The account portal has an unexpected Content-Security-Policy: '$portalCsp'."
                 }
             }
         }
@@ -588,7 +602,7 @@ if (Test-TcpPort -HostName $Domain -Port 80) {
 try {
     $socket = [System.Net.WebSockets.ClientWebSocket]::new()
     $socket.Options.AddSubProtocol('xmpp')
-    $socket.Options.SetRequestHeader('Origin', "https://$Domain")
+    $socket.Options.SetRequestHeader('Origin', 'maer-chat://app')
     $cancellation = [System.Threading.CancellationTokenSource]::new(
         [TimeSpan]::FromSeconds($TimeoutSeconds))
     try {

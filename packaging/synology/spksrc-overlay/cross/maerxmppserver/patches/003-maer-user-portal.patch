@@ -1,0 +1,2006 @@
+diff --git a/src/maer_portal_smtp.erl b/src/maer_portal_smtp.erl
+new file mode 100644
+index 00000000..549f947f
+--- /dev/null
++++ b/src/maer_portal_smtp.erl
+@@ -0,0 +1,288 @@
++%%%----------------------------------------------------------------------
++%%% Minimal TLS-only SMTP transport for the MAER Chat account portal.
++%%%
++%%% The transport deliberately supports implicit TLS only.  Keeping STARTTLS
++%%% and plaintext modes out of this module makes a configuration mistake fail
++%%% closed instead of exposing SMTP credentials on the network.
++%%%----------------------------------------------------------------------
++
++-module(maer_portal_smtp).
++
++-export([configured/1, send/5]).
++
++-include_lib("kernel/include/file.hrl").
++
++-define(MAX_REPLY_LINES, 100).
++
++-spec configured(map()) -> boolean().
++configured(Opts) when is_map(Opts) ->
++    Host = maps:get(smtp_host, Opts, <<>>),
++    Port = maps:get(smtp_port, Opts, 465),
++    User = maps:get(smtp_username, Opts, <<>>),
++    PasswordFile = maps:get(smtp_password_file, Opts, <<>>),
++    From = maps:get(smtp_from, Opts, <<>>),
++    Timeout = maps:get(smtp_timeout, Opts, 10000),
++    valid_host(Host) andalso valid_port(Port) andalso valid_address(From) andalso
++    valid_timeout(Timeout) andalso
++    case auth_shape(User, PasswordFile) of
++        no_auth -> true;
++        password_file -> password_file_available(PasswordFile);
++        invalid -> false
++    end;
++configured(_) -> false.
++
++-spec send(map(), binary(), binary(), binary(), binary()) ->
++          ok | {error, not_configured | invalid_configuration |
++                       credentials_unavailable | tls_failed | smtp_rejected}.
++send(Opts, Recipient, Subject, Body, MessageID)
++  when is_map(Opts), is_binary(Recipient), is_binary(Subject),
++       is_binary(Body), is_binary(MessageID) ->
++    process_flag(sensitive, true),
++    case smtp_config(Opts) of
++        {ok, Config} ->
++            deliver(Config, Recipient, Subject, Body, MessageID);
++        Error ->
++            Error
++    end.
++
++smtp_config(Opts) ->
++    Host = maps:get(smtp_host, Opts, <<>>),
++    Port = maps:get(smtp_port, Opts, 465),
++    User = maps:get(smtp_username, Opts, <<>>),
++    PasswordFile = maps:get(smtp_password_file, Opts, <<>>),
++    From = maps:get(smtp_from, Opts, <<>>),
++    Timeout = maps:get(smtp_timeout, Opts, 10000),
++    case {valid_host(Host), valid_port(Port), valid_address(From),
++          valid_timeout(Timeout), auth_shape(User, PasswordFile)} of
++        {false, _, _, _, _} when Host =:= <<>> ->
++            {error, not_configured};
++        {true, true, true, true, no_auth} ->
++            {ok, #{host => Host, port => Port, username => <<>>,
++                   password => <<>>, from => From, timeout => Timeout}};
++        {true, true, true, true, password_file} ->
++            case read_password(PasswordFile) of
++                {ok, Password} ->
++                    {ok, #{host => Host, port => Port, username => User,
++                           password => Password, from => From,
++                           timeout => Timeout}};
++                error ->
++                    {error, credentials_unavailable}
++            end;
++        _ ->
++            {error, invalid_configuration}
++    end.
++
++auth_shape(<<>>, <<>>) -> no_auth;
++auth_shape(User, File) when User =/= <<>>, File =/= <<>> -> password_file;
++auth_shape(_, _) -> invalid.
++
++valid_host(Host) when is_binary(Host), byte_size(Host) =< 253 ->
++    no_control_chars(Host) andalso
++    re:run(Host, <<"^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$">>,
++           [{capture, none}]) =:= match;
++valid_host(_) -> false.
++
++valid_port(Port) -> is_integer(Port) andalso Port > 0 andalso Port < 65536.
++valid_timeout(Timeout) ->
++    is_integer(Timeout) andalso Timeout >= 1000 andalso Timeout =< 60000.
++
++valid_address(Address) when is_binary(Address), byte_size(Address) =< 254 ->
++    no_control_chars(Address) andalso
++    re:run(Address,
++           <<"^[A-Za-z0-9.!#$%&'*+/=?^_{}|~-]+@[A-Za-z0-9.-]+$">>,
++           [{capture, none}]) =:= match;
++valid_address(_) -> false.
++
++no_control_chars(Value) ->
++    re:run(Value, <<"[\\x00-\\x1f\\x7f]">>, [{capture, none}]) =:= nomatch.
++
++read_password(Path) when is_binary(Path), byte_size(Path) =< 4096 ->
++    File = binary_to_list(Path),
++    case file:read_link_info(File) of
++        {ok, #file_info{type = regular, mode = Mode, size = Size}}
++          when Size > 0, Size =< 4096, (Mode band 8#027) =:= 0 ->
++            case file:read_file(File) of
++                {ok, Raw} ->
++                    Password = strip_one_line_ending(Raw),
++                    case Password =/= <<>> andalso no_control_chars(Password) of
++                        true -> {ok, Password};
++                        false -> error
++                    end;
++                _ -> error
++            end;
++        _ -> error
++    end;
++read_password(_) -> error.
++
++password_file_available(Path) when is_binary(Path), byte_size(Path) =< 4096 ->
++    case file:read_link_info(binary_to_list(Path)) of
++        {ok, #file_info{type = regular, mode = Mode, size = Size}} ->
++            Size > 0 andalso Size =< 4096 andalso (Mode band 8#027) =:= 0;
++        _ -> false
++    end;
++password_file_available(_) -> false.
++
++strip_one_line_ending(Value) ->
++    Size = byte_size(Value),
++    case Size >= 2 andalso binary:part(Value, Size - 2, 2) =:= <<"\r\n">> of
++        true -> binary:part(Value, 0, Size - 2);
++        false ->
++            case Size >= 1 andalso binary:part(Value, Size - 1, 1) =:= <<"\n">> of
++                true -> binary:part(Value, 0, Size - 1);
++                false -> Value
++            end
++    end.
++
++deliver(#{host := Host, port := Port, timeout := Timeout} = Config,
++        Recipient, Subject, Body, MessageID) ->
++    case valid_address(Recipient) andalso safe_header(Subject) andalso
++         safe_header(MessageID) of
++        false ->
++            {error, invalid_configuration};
++        true ->
++            TLSOpts = [{active, false},
++                       {packet, line},
++                       {verify, verify_peer},
++                       {cacertfile, path_list(pkix:get_cafile())},
++                       {server_name_indication, binary_to_list(Host)},
++                       {customize_hostname_check,
++                        [{match_fun,
++                          public_key:pkix_verify_hostname_match_fun(https)}]},
++                       {versions, ['tlsv1.2', 'tlsv1.3']}],
++            case ssl:connect(binary_to_list(Host), Port, TLSOpts, Timeout) of
++                {ok, Socket} ->
++                    Result = smtp_dialog(Socket, Config, Recipient, Subject,
++                                         Body, MessageID),
++                    _ = ssl:close(Socket),
++                    Result;
++                _ ->
++                    {error, tls_failed}
++            end
++    end.
++
++path_list(Path) when is_binary(Path) -> binary_to_list(Path);
++path_list(Path) -> Path.
++
++safe_header(Value) ->
++    is_binary(Value) andalso byte_size(Value) =< 998 andalso
++    no_control_chars(Value).
++
++smtp_dialog(Socket, #{host := Host, username := User, password := Password,
++                      from := From, timeout := Timeout},
++            Recipient, Subject, Body, MessageID) ->
++    case expect(Socket, 220, Timeout) of
++        ok ->
++            with_command(Socket, <<"EHLO ", Host/binary>>, 250, Timeout,
++              fun() ->
++                  authenticate(Socket, User, Password, Timeout,
++                    fun() ->
++                        with_command(Socket, <<"MAIL FROM:<", From/binary, ">">>,
++                                     250, Timeout,
++                          fun() ->
++                              with_command(Socket,
++                                           <<"RCPT TO:<", Recipient/binary, ">">>,
++                                           [250, 251], Timeout,
++                                fun() ->
++                                    with_command(Socket, <<"DATA">>, 354,
++                                                 Timeout,
++                                      fun() ->
++                                          send_message(Socket, From, Recipient,
++                                                       Subject, Body, MessageID,
++                                                       Timeout)
++                                      end)
++                                end)
++                          end)
++                    end)
++              end);
++        error -> {error, smtp_rejected}
++    end.
++
++authenticate(_Socket, <<>>, <<>>, _Timeout, Next) -> Next();
++authenticate(Socket, User, Password, Timeout, Next) ->
++    Credentials = base64:encode(<<0, User/binary, 0, Password/binary>>),
++    with_command(Socket, <<"AUTH PLAIN ", Credentials/binary>>, 235,
++                 Timeout, Next).
++
++with_command(Socket, Command, Codes, Timeout, Next) ->
++    case ssl:send(Socket, [Command, "\r\n"]) of
++        ok ->
++            case expect(Socket, Codes, Timeout) of
++                ok -> Next();
++                error -> {error, smtp_rejected}
++            end;
++        _ -> {error, smtp_rejected}
++    end.
++
++send_message(Socket, From, Recipient, Subject, Body, MessageID, Timeout) ->
++    Message = [<<"From: ">>, From, <<"\r\nTo: ">>, Recipient,
++               <<"\r\nSubject: ">>, Subject,
++               <<"\r\nMessage-ID: <">>, MessageID, <<"@xmpp.maer.fr>\r\n">>,
++               <<"MIME-Version: 1.0\r\n">>,
++               <<"Content-Type: text/plain; charset=UTF-8\r\n">>,
++               <<"Content-Transfer-Encoding: 8bit\r\n\r\n">>,
++               dot_stuff(Body), <<"\r\n.\r\n">>],
++    case ssl:send(Socket, Message) of
++        ok ->
++            case expect(Socket, 250, Timeout) of
++                ok ->
++                    _ = ssl:send(Socket, <<"QUIT\r\n">>),
++                    ok;
++                error -> {error, smtp_rejected}
++            end;
++        _ -> {error, smtp_rejected}
++    end.
++
++dot_stuff(Body) ->
++    Normalized0 = binary:replace(Body, <<"\r\n">>, <<"\n">>, [global]),
++    Normalized = binary:replace(Normalized0, <<"\r">>, <<"\n">>, [global]),
++    Lines = binary:split(Normalized, <<"\n">>, [global]),
++    iolist_to_binary(lists:join(<<"\r\n">>,
++                                [dot_stuff_line(Line) || Line <- Lines])).
++
++dot_stuff_line(<<".", _/binary>> = Line) -> <<".", Line/binary>>;
++dot_stuff_line(Line) -> Line.
++
++expect(Socket, Codes, Timeout) when is_integer(Codes) ->
++    expect(Socket, [Codes], Timeout);
++expect(Socket, Codes, Timeout) ->
++    recv_reply(Socket, Codes, Timeout, ?MAX_REPLY_LINES).
++
++recv_reply(_Socket, _Codes, _Timeout, 0) -> error;
++recv_reply(Socket, Codes, Timeout, Remaining) ->
++    case ssl:recv(Socket, 0, Timeout) of
++        {ok, <<A, B, C, Sep, _/binary>>}
++          when A >= $0, A =< $9, B >= $0, B =< $9, C >= $0, C =< $9 ->
++            Code = (A - $0) * 100 + (B - $0) * 10 + (C - $0),
++            case {lists:member(Code, Codes), Sep} of
++                {true, $ } -> ok;
++                {true, $-} ->
++                    recv_reply(Socket, Codes, Timeout, Remaining - 1);
++                _ -> error
++            end;
++        _ -> error
++    end.
++
++-ifdef(TEST).
++-include_lib("eunit/include/eunit.hrl").
++
++dot_stuff_test() ->
++    ?assertEqual(<<"one\r\n..two\r\n...three">>,
++                 dot_stuff(<<"one\n.two\r\n..three">>)).
++
++address_validation_test() ->
++    ?assert(valid_address(<<"person@example.org">>)),
++    ?assertNot(valid_address(<<"person@example.org\r\nBcc:x@example.org">>)),
++    ?assertNot(valid_address(<<"missing-at.example.org">>)).
++
++host_validation_test() ->
++    ?assert(valid_host(<<"smtp.example.org">>)),
++    ?assertNot(valid_host(<<"smtp.example.org\r\n">>)).
++
++missing_password_file_is_not_configured_test() ->
++    Opts = #{smtp_host => <<"smtp.example.org">>, smtp_port => 465,
++             smtp_username => <<"sender@example.org">>,
++             smtp_password_file => <<"/definitely/missing/maer-smtp-password">>,
++             smtp_from => <<"sender@example.org">>, smtp_timeout => 10000},
++    ?assertNot(configured(Opts)).
++
++-endif.
+diff --git a/src/mod_maer_portal.erl b/src/mod_maer_portal.erl
+new file mode 100644
+index 00000000..d90b1a7b
+--- /dev/null
++++ b/src/mod_maer_portal.erl
+@@ -0,0 +1,1514 @@
++%%%----------------------------------------------------------------------
++%%% MAER Chat self-service account portal.
++%%%
++%%% This module is deliberately independent from ejabberd_web_admin.  It is a
++%%% small request handler backed by a dedicated SQLite database and exposes no
++%%% ejabberd administrative command surface.
++%%%----------------------------------------------------------------------
++
++-module(mod_maer_portal).
++
++-behaviour(gen_mod).
++-behaviour(gen_server).
++
++-export([start/2, stop/1, reload/3, depends/2,
++         mod_opt_type/1, mod_options/1, mod_doc/0]).
++-export([process/2]).
++-export([init/1, handle_call/3, handle_cast/2, handle_info/2,
++         terminate/2, code_change/3]).
++
++-include("ejabberd_http.hrl").
++-include_lib("kernel/include/file.hrl").
++
++-define(HOST, <<"xmpp.maer.fr">>).
++-define(SESSION_COOKIE, <<"maer_portal_session">>).
++-define(MAX_FORM_SIZE, 8192).
++-define(CLEANUP_INTERVAL, 60000).
++-define(PREAUTH_TTL, 600).
++-define(EMAIL_TOKEN_TTL, 86400).
++-define(PASSWORD_TOKEN_TTL, 1800).
++
++-record(session,
++        {hash,
++         user,
++         csrf_token,
++         csrf_hash,
++         created_at,
++         seen_at,
++         expires_at}).
++
++-record(state,
++        {host,
++         opts = #{},
++         db,
++         db_path,
++         sessions,
++         preauth,
++         rates,
++         cleanup_ref}).
++
++%%%===================================================================
++%%% gen_mod callbacks
++%%%===================================================================
++
++start(Host, Opts) ->
++    gen_mod:start_child(?MODULE, Host, Opts).
++
++stop(Host) ->
++    gen_mod:stop_child(?MODULE, Host).
++
++reload(Host, NewOpts, _OldOpts) ->
++    Proc = gen_mod:get_module_proc(Host, ?MODULE),
++    gen_server:cast(Proc, {reload, NewOpts}).
++
++depends(_Host, _Opts) ->
++    [].
++
++mod_opt_type(database_path) -> econf:binary();
++mod_opt_type(public_base_url) -> econf:url();
++mod_opt_type(smtp_host) -> econf:binary();
++mod_opt_type(smtp_port) -> econf:port();
++mod_opt_type(smtp_username) -> econf:binary();
++mod_opt_type(smtp_password_file) -> econf:binary();
++mod_opt_type(smtp_from) -> econf:binary();
++mod_opt_type(smtp_timeout) -> econf:pos_int();
++mod_opt_type(session_ttl) -> econf:pos_int();
++mod_opt_type(session_idle_ttl) -> econf:pos_int();
++mod_opt_type(login_attempts) -> econf:pos_int();
++mod_opt_type(account_actions_per_hour) -> econf:pos_int().
++
++mod_options(_Host) ->
++    [{database_path,
++      <<"/var/packages/maerxmppserver/var/data/maer-portal.sqlite">>},
++     {public_base_url, <<"https://xmpp.maer.fr/account">>},
++     {smtp_host, <<"smtp-zose.yulpa.io">>},
++     {smtp_port, 465},
++     {smtp_username, <<"no-reply@maer.fr">>},
++     {smtp_password_file,
++      <<"/var/packages/maerxmppserver/var/config/smtp-password">>},
++     {smtp_from, <<"no-reply@maer.fr">>},
++     {smtp_timeout, 10000},
++     {session_ttl, 86400},
++     {session_idle_ttl, 1800},
++     {login_attempts, 8},
++     {account_actions_per_hour, 3}].
++
++mod_doc() ->
++    #{desc =>
++          <<"MAER Chat self-service account portal. It authenticates only "
++            "short identifiers on xmpp.maer.fr, stores portal metadata in a "
++            "separate SQLite database, and sends verification messages over "
++            "implicit-TLS SMTP.">>,
++      note => "added by MAER in 2026",
++      opts =>
++          [{database_path,
++            #{value => <<"path">>,
++              desc => <<"Dedicated SQLite file owned by the package user.">>}},
++           {public_base_url,
++            #{value => <<"https URL">>,
++              desc => <<"Canonical public /account URL used in email links.">>}},
++           {smtp_host,
++            #{value => <<"hostname">>,
++              desc => <<"Implicit-TLS SMTP server; empty disables email flows.">>}},
++           {smtp_password_file,
++            #{value => <<"path">>,
++              desc => <<"Server-side credential file; never sent to clients.">>}}]}.
++
++%%%===================================================================
++%%% gen_server callbacks and state
++%%%===================================================================
++
++init([?HOST = Host, Opts]) ->
++    process_flag(trap_exit, true),
++    process_flag(sensitive, true),
++    DbPath = maps:get(database_path, Opts),
++    case maps:get(public_base_url, Opts) of
++        <<"https://xmpp.maer.fr/account">> ->
++            init_database(Host, Opts, DbPath);
++        _ ->
++            {stop, invalid_portal_public_base_url}
++    end;
++init([Host, _Opts]) ->
++    {stop, {unsupported_portal_host, Host}}.
++
++init_database(Host, Opts, DbPath) ->
++    case open_database(DbPath) of
++        {ok, Db} ->
++            Sessions = ets:new(maer_portal_sessions,
++                               [set, private, {keypos, #session.hash}]),
++            Preauth = ets:new(maer_portal_preauth, [set, private]),
++            Rates = ets:new(maer_portal_rates, [set, private]),
++            Ref = erlang:send_after(?CLEANUP_INTERVAL, self(), cleanup),
++            {ok, #state{host = Host, opts = Opts, db = Db,
++                        db_path = DbPath, sessions = Sessions,
++                        preauth = Preauth, rates = Rates,
++                        cleanup_ref = Ref}};
++        {error, Reason} ->
++            {stop, {portal_database_unavailable, Reason}}
++    end.
++
++handle_call({new_preauth, IP}, _From, State) ->
++    Token = random_token(),
++    Hash = token_hash(Token),
++    Expires = now_seconds() + ?PREAUTH_TTL,
++    true = ets:insert(State#state.preauth, {Hash, IP, Expires}),
++    {reply, {ok, Token}, State};
++handle_call({login, IP, User0, Password, CsrfHash}, _From, State) ->
++    Reply = login(IP, User0, Password, CsrfHash, State),
++    {reply, Reply, State};
++handle_call({lookup, SessionHash}, _From, State) ->
++    {reply, lookup_session(SessionHash, true, State), State};
++handle_call({logout, SessionHash, CsrfHash}, _From, State) ->
++    Reply = with_authenticated_session(
++              SessionHash, CsrfHash, State,
++              fun(_User) ->
++                  ets:delete(State#state.sessions, SessionHash),
++                  ok
++              end),
++    {reply, Reply, State};
++handle_call({update_options, SessionHash, CsrfHash, Options}, _From, State) ->
++    Reply = with_authenticated_session(
++              SessionHash, CsrfHash, State,
++              fun(User) -> update_options(User, Options, State) end),
++    {reply, Reply, State};
++handle_call({associate_email, SessionHash, CsrfHash, Email}, _From, State) ->
++    Reply = with_authenticated_session(
++              SessionHash, CsrfHash, State,
++              fun(User) -> associate_email(User, Email, State) end),
++    {reply, Reply, State};
++handle_call({request_password, SessionHash, CsrfHash}, _From, State) ->
++    Reply = with_authenticated_session(
++              SessionHash, CsrfHash, State,
++              fun(User) -> request_password_change(User, State) end),
++    {reply, Reply, State};
++handle_call({verify_email, IP, CsrfHash, Token}, _From, State) ->
++    Reply = case consume_preauth(CsrfHash, IP, State) of
++        true ->
++            case allow_rate({verify_email, IP}, 30, 900, State) of
++                true -> verify_email(Token, State);
++                false -> {error, rate_limited}
++            end;
++        false -> {error, csrf}
++    end,
++    {reply, Reply, State};
++handle_call({change_password, SessionHash, CsrfHash, Token,
++             Password, Confirmation}, _From, State) ->
++    Reply = with_authenticated_session(
++              SessionHash, CsrfHash, State,
++              fun(User) ->
++                  change_password(User, Token, Password, Confirmation, State)
++              end),
++    {reply, Reply, State};
++handle_call(_Request, _From, State) ->
++    {reply, {error, unexpected_request}, State}.
++
++handle_cast({reload, NewOpts}, State) ->
++    %% Moving an open SQLite database during reload is intentionally not
++    %% supported.  All other operational settings take effect immediately.
++    KeptPath = State#state.db_path,
++    {noreply, State#state{opts = maps:put(database_path, KeptPath, NewOpts)}};
++handle_cast(_Message, State) ->
++    {noreply, State}.
++
++handle_info(cleanup, State) ->
++    cleanup_memory(State),
++    _ = db_exec(State#state.db,
++                <<"DELETE FROM portal_tokens WHERE expires_at <= ?">>,
++                [now_seconds()]),
++    secure_db_files(State#state.db_path),
++    Ref = erlang:send_after(?CLEANUP_INTERVAL, self(), cleanup),
++    {noreply, State#state{cleanup_ref = Ref}};
++handle_info(_Message, State) ->
++    {noreply, State}.
++
++terminate(_Reason, #state{db = Db, cleanup_ref = Ref}) ->
++    erlang:cancel_timer(Ref),
++    catch sqlite3:close(Db),
++    ok.
++
++code_change(_OldVersion, State, _Extra) ->
++    {ok, State}.
++
++%%%===================================================================
++%%% HTTP request handler
++%%%===================================================================
++
++process(Path, #request{tp = https, host = Host} = Request) ->
++    case canonical_host(Host) of
++        true -> process_https(Path, Request);
++        false -> not_found()
++    end;
++process(_Path, #request{}) ->
++    html_response(426, [], message_page(<<"HTTPS requis">>,
++                                        <<"Ce portail est disponible uniquement en HTTPS.">>)).
++
++process_https([<<"assets">>, <<"portal.css">>],
++              #request{method = 'GET'}) ->
++    serve_priv_file(["maer_portal", "portal.css"], <<"text/css; charset=utf-8">>);
++process_https([<<"assets">>, <<"portal.js">>],
++              #request{method = 'GET'}) ->
++    serve_priv_file(["maer_portal", "portal.js"],
++                    <<"application/javascript; charset=utf-8">>);
++process_https([<<"assets">>, <<"logo.png">>],
++              #request{method = 'GET'}) ->
++    serve_priv_file(["img", "admin-logo.png"], <<"image/png">>);
++process_https([], #request{method = 'GET'} = Request) ->
++    dashboard_or_login(Request, undefined);
++process_https([<<"login">>], #request{method = 'POST'} = Request) ->
++    handle_login(Request);
++process_https([<<"logout">>], #request{method = 'POST'} = Request) ->
++    handle_logout(Request);
++process_https([<<"options">>], #request{method = 'POST'} = Request) ->
++    handle_options(Request);
++process_https([<<"email">>], #request{method = 'POST'} = Request) ->
++    handle_email(Request);
++process_https([<<"verify-email">>], #request{method = 'GET'} = Request) ->
++    verification_form(Request);
++process_https([<<"verify-email">>], #request{method = 'POST'} = Request) ->
++    handle_email_verification(Request);
++process_https([<<"password">>], #request{method = 'POST'} = Request) ->
++    handle_password_request(Request);
++process_https([<<"password">>, <<"confirm">>],
++              #request{method = 'GET'} = Request) ->
++    password_confirmation_form(Request);
++process_https([<<"password">>, <<"confirm">>],
++              #request{method = 'POST'} = Request) ->
++    handle_password_change(Request);
++process_https(_Path, #request{method = Method})
++  when Method =:= 'POST'; Method =:= 'PUT'; Method =:= 'DELETE';
++       Method =:= 'PATCH' ->
++    html_response(405, [{<<"Allow">>, <<"GET, POST">>}],
++                  message_page(<<"Méthode refusée">>,
++                               <<"Cette opération n’est pas disponible.">>));
++process_https(_Path, _Request) ->
++    not_found().
++
++dashboard_or_login(#request{host = Host, ip = {IP, _}} = Request, Message) ->
++    case session_from_request(Request) of
++        {ok, SessionHash} ->
++            case call_host(Host, {lookup, SessionHash}) of
++                {ok, User, Profile, MailEnabled, CsrfToken} ->
++                    dashboard_response(User, Profile, CsrfToken,
++                                       MailEnabled, Message);
++                _ ->
++                    login_response(Host, IP, 200, Message)
++            end;
++        none ->
++            login_response(Host, IP, 200, Message)
++    end.
++
++handle_login(#request{host = Host, ip = {IP, _}, q = Q} = Request) ->
++    case valid_form_request(Request) of
++        false -> bad_request();
++        true ->
++            case {single_param(Q, <<"username">>),
++                  single_param(Q, <<"password">>),
++                  request_csrf(Request, Q)} of
++                {{ok, User}, {ok, Password}, {ok, CsrfHash}} ->
++                    case call_host(Host, {login, IP, User, Password, CsrfHash}) of
++                        {ok, SessionToken} ->
++                            redirect(<<"/account/">>,
++                                     [session_cookie(SessionToken)]);
++                        {error, rate_limited} ->
++                            login_response(Host, IP, 429,
++                                           <<"Trop de tentatives. Réessayez plus tard.">>);
++                        _ ->
++                            login_response(Host, IP, 401,
++                                           <<"Identifiant ou mot de passe incorrect.">>)
++                    end;
++                _ -> bad_request()
++            end
++    end.
++
++handle_logout(#request{host = Host, q = Q} = Request) ->
++    case {valid_form_request(Request), authenticated_form(Request, Q)} of
++        {true, {ok, SessionHash, CsrfHash}} ->
++            case call_host(Host, {logout, SessionHash, CsrfHash}) of
++                ok -> redirect(<<"/account/">>, clear_cookies());
++                {error, auth} -> redirect(<<"/account/">>, clear_cookies());
++                _ -> unavailable()
++            end;
++        _ -> bad_request()
++    end.
++
++handle_options(#request{host = Host, q = Q} = Request) ->
++    case {valid_form_request(Request), authenticated_form(Request, Q)} of
++        {true, {ok, SessionHash, CsrfHash}} ->
++            Options = #{audio => checked(Q, <<"audio">>),
++                        video => checked(Q, <<"video">>),
++                        screen_share => checked(Q, <<"screen_share">>),
++                        assistance => checked(Q, <<"assistance">>),
++                        password_manager => checked(Q, <<"password_manager">>)},
++            case call_host(Host, {update_options, SessionHash,
++                                  CsrfHash, Options}) of
++                {ok, _Profile} ->
++                    dashboard_or_login(Request,
++                                       <<"Préférences enregistrées.">>);
++                {error, auth} -> session_expired();
++                _ -> unavailable()
++            end;
++        _ -> bad_request()
++    end.
++
++handle_email(#request{host = Host, q = Q} = Request) ->
++    case {valid_form_request(Request), authenticated_form(Request, Q),
++          single_param(Q, <<"email">>)} of
++        {true, {ok, SessionHash, CsrfHash}, {ok, Email}} ->
++            case call_host(Host, {associate_email, SessionHash,
++                                  CsrfHash, Email}) of
++                {ok, _Profile} ->
++                    dashboard_or_login(Request,
++                      <<"Un message de vérification a été envoyé. Le lien expire dans 24 heures.">>);
++                {error, invalid_email} ->
++                    dashboard_or_login(Request,
++                                       <<"Adresse email invalide.">>);
++                {error, rate_limited} -> rate_limited();
++                {error, mail_unavailable} ->
++                    dashboard_or_login(Request,
++                      <<"L’envoi email est momentanément indisponible.">>);
++                {error, auth} -> session_expired();
++                _ -> unavailable()
++            end;
++        _ -> bad_request()
++    end.
++
++verification_form(#request{host = Host, ip = {IP, _}}) ->
++    case call_host(Host, {new_preauth, IP}) of
++        {ok, Csrf} ->
++            html_response(200, [], verify_email_page(Csrf));
++        _ -> unavailable()
++    end.
++
++handle_email_verification(#request{host = Host, ip = {IP, _}, q = Q} = Request) ->
++    case {valid_form_request(Request), request_csrf(Request, Q),
++          single_param(Q, <<"token">>)} of
++        {true, {ok, CsrfHash}, {ok, Token}} ->
++            case call_host(Host, {verify_email, IP, CsrfHash, Token}) of
++                ok ->
++                    html_response(200, [],
++                      message_page(<<"Email vérifié">>,
++                                   <<"Votre adresse est maintenant associée au compte MAER Chat.">>));
++                {error, invalid_token} -> invalid_link();
++                {error, rate_limited} -> rate_limited();
++                {error, csrf} -> bad_request();
++                _ -> unavailable()
++            end;
++        _ -> bad_request()
++    end.
++
++handle_password_request(#request{host = Host, q = Q} = Request) ->
++    case {valid_form_request(Request), authenticated_form(Request, Q)} of
++        {true, {ok, SessionHash, CsrfHash}} ->
++            case call_host(Host, {request_password, SessionHash, CsrfHash}) of
++                ok ->
++                    dashboard_or_login(Request,
++                      <<"Un lien de confirmation a été envoyé à votre adresse vérifiée.">>);
++                {error, email_required} ->
++                    dashboard_or_login(Request,
++                      <<"Associez et vérifiez d’abord une adresse email.">>);
++                {error, rate_limited} -> rate_limited();
++                {error, mail_unavailable} ->
++                    dashboard_or_login(Request,
++                      <<"L’envoi email est momentanément indisponible.">>);
++                {error, auth} -> session_expired();
++                _ -> unavailable()
++            end;
++        _ -> bad_request()
++    end.
++
++password_confirmation_form(#request{host = Host} = Request) ->
++    case session_from_request(Request) of
++        {ok, SessionHash} ->
++            case call_host(Host, {lookup, SessionHash}) of
++                {ok, User, _Profile, _, SessionCsrf} ->
++                    html_response(200, [], password_page(User, SessionCsrf));
++                _ -> session_expired()
++            end;
++        none -> session_expired()
++    end.
++
++handle_password_change(#request{host = Host, q = Q} = Request) ->
++    case {valid_form_request(Request), authenticated_form(Request, Q),
++          single_param(Q, <<"token">>),
++          single_param(Q, <<"password">>),
++          single_param(Q, <<"confirmation">>)} of
++        {true, {ok, SessionHash, CsrfHash}, {ok, Token},
++         {ok, Password}, {ok, Confirmation}} ->
++            case call_host(Host, {change_password, SessionHash, CsrfHash,
++                                  Token, Password, Confirmation}) of
++                ok ->
++                    html_response(200, clear_cookies(),
++                      message_page(<<"Mot de passe modifié">>,
++                        <<"Toutes les sessions du portail ont été fermées. Vous pouvez vous reconnecter.">>));
++                {error, invalid_password} ->
++                    html_response(400, [],
++                      message_page(<<"Mot de passe refusé">>,
++                        <<"Utilisez au moins 12 caractères et confirmez exactement la même valeur.">>));
++                {error, invalid_token} -> invalid_link();
++                {error, auth} -> session_expired();
++                _ -> unavailable()
++            end;
++        _ -> bad_request()
++    end.
++
++%%%===================================================================
++%%% Authentication, sessions, rate limiting
++%%%===================================================================
++
++login(IP, User0, Password, CsrfHash, State) ->
++    case consume_preauth(CsrfHash, IP, State) of
++        false -> {error, csrf};
++        true ->
++            case normalize_username(User0) of
++                {ok, User} ->
++                    Limit = maps:get(login_attempts, State#state.opts, 8),
++                    case allow_rate({login, IP, User}, Limit, 900, State) andalso
++                         allow_rate({login_ip, IP}, Limit * 4, 900, State) of
++                        false -> {error, rate_limited};
++                        true -> authenticate_login(User, Password, State)
++                    end;
++                error -> {error, invalid_credentials}
++            end
++    end.
++
++authenticate_login(User, Password, State)
++  when is_binary(Password), byte_size(Password) > 0,
++       byte_size(Password) =< 1024 ->
++    try ejabberd_auth:check_password(User, <<>>, ?HOST, Password) of
++        true -> create_session(User, State);
++        false -> {error, invalid_credentials}
++    catch
++        _:_ -> {error, invalid_credentials}
++    end;
++authenticate_login(_, _, _) ->
++    {error, invalid_credentials}.
++
++create_session(User, State) ->
++    SessionToken = random_token(),
++    CsrfToken = random_token(),
++    Now = now_seconds(),
++    TTL = maps:get(session_ttl, State#state.opts, 86400),
++    Session = #session{hash = token_hash(SessionToken), user = User,
++                       csrf_token = CsrfToken,
++                       csrf_hash = token_hash(CsrfToken),
++                       created_at = Now, seen_at = Now,
++                       expires_at = Now + TTL},
++    true = ets:insert(State#state.sessions, Session),
++    {ok, SessionToken}.
++
++lookup_session(Hash, Touch, State) when is_binary(Hash) ->
++    Now = now_seconds(),
++    IdleTTL = maps:get(session_idle_ttl, State#state.opts, 1800),
++    case ets:lookup(State#state.sessions, Hash) of
++        [#session{user = User, csrf_token = CsrfToken,
++                  seen_at = Seen, expires_at = Expires} = Session]
++          when Expires > Now, Seen + IdleTTL > Now ->
++            case Touch of
++                true -> ets:insert(State#state.sessions,
++                                   Session#session{seen_at = Now});
++                false -> ok
++            end,
++            case get_profile(User, State) of
++                {ok, Profile} ->
++                    {ok, User, Profile, mail_enabled(State#state.opts),
++                     CsrfToken};
++                _ -> {error, unavailable}
++            end;
++        [_] ->
++            ets:delete(State#state.sessions, Hash),
++            {error, expired};
++        [] -> {error, auth}
++    end;
++lookup_session(_, _, _) -> {error, auth}.
++
++with_authenticated_session(SessionHash, CsrfHash, State, Fun) ->
++    case ets:lookup(State#state.sessions, SessionHash) of
++        [#session{user = User, csrf_hash = Expected, seen_at = Seen,
++                  expires_at = Expires} = Session] ->
++            Now = now_seconds(),
++            IdleTTL = maps:get(session_idle_ttl, State#state.opts, 1800),
++            case Expires > Now andalso Seen + IdleTTL > Now andalso
++                 secure_equal(Expected, CsrfHash) of
++                true ->
++                    ets:insert(State#state.sessions,
++                               Session#session{seen_at = Now}),
++                    Fun(User);
++                false ->
++                    ets:delete(State#state.sessions, SessionHash),
++                    {error, auth}
++            end;
++        [] -> {error, auth}
++    end.
++
++consume_preauth(Hash, IP, State) ->
++    Now = now_seconds(),
++    case ets:take(State#state.preauth, Hash) of
++        [{Hash, IP, Expires}] when Expires > Now -> true;
++        _ -> false
++    end.
++
++allow_rate(Key, Limit, Window, State) ->
++    Now = now_seconds(),
++    case ets:lookup(State#state.rates, Key) of
++        [] -> ets:insert(State#state.rates, {Key, Now, 1}), true;
++        [{Key, Started, _}] when Started + Window =< Now ->
++            ets:insert(State#state.rates, {Key, Now, 1}), true;
++        [{Key, Started, Count}] when Count < Limit ->
++            ets:insert(State#state.rates, {Key, Started, Count + 1}), true;
++        [_] -> false
++    end.
++
++cleanup_memory(State) ->
++    Now = now_seconds(),
++    IdleTTL = maps:get(session_idle_ttl, State#state.opts, 1800),
++    ets:select_delete(State#state.sessions,
++      [{#session{hash = '_', user = '_', csrf_token = '_', csrf_hash = '_',
++                 created_at = '_',
++                 seen_at = '$1', expires_at = '$2'},
++        [{'orelse', {'=<', '$2', Now}, {'=<', {'+', '$1', IdleTTL}, Now}}],
++        [true]}]),
++    ets:select_delete(State#state.preauth,
++                      [{{'_', '_', '$1'}, [{'=<' , '$1', Now}], [true]}]),
++    ets:select_delete(State#state.rates,
++                      [{{'_', '$1', '_'}, [{'=<' , '$1', Now - 7200}], [true]}]),
++    ok.
++
++%%%===================================================================
++%%% Persistent account metadata and email flows
++%%%===================================================================
++
++update_options(User, Options, State) when is_map(Options) ->
++    case ensure_profile(User, State) of
++        ok ->
++            Params = [bool_int(maps:get(audio, Options, false)),
++                      bool_int(maps:get(video, Options, false)),
++                      bool_int(maps:get(screen_share, Options, false)),
++                      bool_int(maps:get(assistance, Options, false)),
++                      bool_int(maps:get(password_manager, Options, false)),
++                      now_seconds(), User],
++            case db_exec(State#state.db,
++              <<"UPDATE portal_profiles SET audio = ?, video = ?, "
++                "screen_share = ?, assistance = ?, password_manager = ?, "
++                "updated_at = ? WHERE username = ?">>, Params) of
++                ok ->
++                    secure_db_files(State#state.db_path),
++                    get_profile(User, State);
++                _ -> {error, unavailable}
++            end;
++        Error -> Error
++    end.
++
++associate_email(User, Email0, State) ->
++    case normalize_email(Email0) of
++        error -> {error, invalid_email};
++        {ok, Email} ->
++            Limit = maps:get(account_actions_per_hour, State#state.opts, 3),
++            case mail_enabled(State#state.opts) of
++                false -> {error, mail_unavailable};
++                true ->
++                    case allow_rate({email, User}, Limit, 3600, State) of
++                        false -> {error, rate_limited};
++                        true -> create_email_verification(User, Email, State)
++                    end
++            end
++    end.
++
++create_email_verification(User, Email, State) ->
++    Token = random_token(),
++    Hash = token_hash(Token),
++    Now = now_seconds(),
++    case transaction(State#state.db,
++      fun() ->
++          ok = ensure_profile(User, State),
++          ok = db_exec(State#state.db,
++                       <<"DELETE FROM portal_tokens WHERE username = ? "
++                         "AND purpose = 'email_verify'">>, [User]),
++          ok = db_exec(State#state.db,
++                       <<"UPDATE portal_profiles SET pending_email = ?, "
++                         "updated_at = ? WHERE username = ?">>,
++                       [Email, Now, User]),
++          db_exec(State#state.db,
++                  <<"INSERT INTO portal_tokens "
++                    "(token_hash, username, purpose, value, expires_at, created_at) "
++                    "VALUES (?, ?, 'email_verify', ?, ?, ?)">>,
++                  [Hash, User, Email, Now + ?EMAIL_TOKEN_TTL, Now])
++      end) of
++        ok ->
++            Link = confirmation_link(State, <<"verify-email">>, Token),
++            Subject = <<"MAER Chat - Verification de votre adresse email">>,
++            Body = <<"Bonjour,\n\nConfirmez l'association de cette adresse "
++                     "a votre compte MAER Chat en ouvrant ce lien :\n\n",
++                     Link/binary,
++                     "\n\nCe lien expire dans 24 heures. Si vous n'etes pas "
++                     "a l'origine de cette demande, ignorez ce message.">>,
++            case send_mail(State, Email, Subject, Body) of
++                ok ->
++                    secure_db_files(State#state.db_path),
++                    get_profile(User, State);
++                _ ->
++                    compensate_token(Hash, User, email_verify, State),
++                    {error, mail_unavailable}
++            end;
++        _ -> {error, unavailable}
++    end.
++
++verify_email(Token, State) ->
++    case valid_bearer_token(Token) of
++        false -> {error, invalid_token};
++        true ->
++            Hash = token_hash(Token),
++            case find_token(Hash, <<"email_verify">>, State) of
++                {ok, User, Email} ->
++                    case transaction(State#state.db,
++                      fun() ->
++                          ok = db_exec(State#state.db,
++                            <<"UPDATE portal_profiles SET email = ?, "
++                              "pending_email = NULL, email_verified = 1, "
++                              "updated_at = ? WHERE username = ?">>,
++                            [Email, now_seconds(), User]),
++                          ok = db_exec(State#state.db,
++                            <<"DELETE FROM portal_tokens WHERE username = ? "
++                              "AND purpose = 'email_verify'">>, [User])
++                      end) of
++                        ok -> secure_db_files(State#state.db_path), ok;
++                        _ -> {error, unavailable}
++                    end;
++                _ -> {error, invalid_token}
++            end
++    end.
++
++request_password_change(User, State) ->
++    Limit = maps:get(account_actions_per_hour, State#state.opts, 3),
++    case {mail_enabled(State#state.opts),
++          allow_rate({password_mail, User}, Limit, 3600, State),
++          get_profile(User, State)} of
++        {false, _, _} -> {error, mail_unavailable};
++        {true, false, _} -> {error, rate_limited};
++        {true, true, {ok, #{email := Email, email_verified := true}}}
++          when Email =/= undefined ->
++            create_password_token(User, Email, State);
++        {true, true, {ok, _}} -> {error, email_required};
++        _ -> {error, unavailable}
++    end.
++
++create_password_token(User, Email, State) ->
++    Token = random_token(),
++    Hash = token_hash(Token),
++    Now = now_seconds(),
++    case transaction(State#state.db,
++      fun() ->
++          ok = db_exec(State#state.db,
++                       <<"DELETE FROM portal_tokens WHERE username = ? "
++                         "AND purpose = 'password_change'">>, [User]),
++          db_exec(State#state.db,
++                  <<"INSERT INTO portal_tokens "
++                    "(token_hash, username, purpose, value, expires_at, created_at) "
++                    "VALUES (?, ?, 'password_change', NULL, ?, ?)">>,
++                  [Hash, User, Now + ?PASSWORD_TOKEN_TTL, Now])
++      end) of
++        ok ->
++            Link = confirmation_link(State, <<"password/confirm">>, Token),
++            Subject = <<"MAER Chat - Confirmation du changement de mot de passe">>,
++            Body = <<"Bonjour,\n\nPour choisir un nouveau mot de passe MAER Chat, "
++                     "ouvrez ce lien dans le navigateur ou vous etes connecte :\n\n",
++                     Link/binary,
++                     "\n\nCe lien expire dans 30 minutes. Aucun mot de passe "
++                     "n'est conserve dans cet email.">>,
++            case send_mail(State, Email, Subject, Body) of
++                ok -> secure_db_files(State#state.db_path), ok;
++                _ ->
++                    compensate_token(Hash, User, password_change, State),
++                    {error, mail_unavailable}
++            end;
++        _ -> {error, unavailable}
++    end.
++
++change_password(User, Token, Password, Confirmation, State) ->
++    case valid_bearer_token(Token) andalso
++         valid_password(Password, Confirmation) of
++        false -> {error, invalid_password};
++        true ->
++            Hash = token_hash(Token),
++            case find_token(Hash, <<"password_change">>, State) of
++                {ok, User, _} ->
++                    case safe_set_password(User, Password) of
++                        ok ->
++                            _ = db_exec(State#state.db,
++                                        <<"DELETE FROM portal_tokens WHERE "
++                                          "username = ? AND purpose = "
++                                          "'password_change'">>, [User]),
++                            revoke_user_sessions(User, State),
++                            secure_db_files(State#state.db_path),
++                            ok;
++                        _ -> {error, unavailable}
++                    end;
++                _ -> {error, invalid_token}
++            end
++    end.
++
++safe_set_password(User, Password) ->
++    try ejabberd_auth:set_password(User, ?HOST, Password) of
++        ok -> ok;
++        _ -> error
++    catch
++        _:_ -> error
++    end.
++
++revoke_user_sessions(User, State) ->
++    ets:select_delete(State#state.sessions,
++      [{#session{hash = '_', user = User, csrf_token = '_', csrf_hash = '_',
++                 created_at = '_',
++                 seen_at = '_', expires_at = '_'}, [], [true]}]),
++    ok.
++
++compensate_token(Hash, User, Purpose, State) ->
++    _ = db_exec(State#state.db,
++                <<"DELETE FROM portal_tokens WHERE token_hash = ?">>, [Hash]),
++    case Purpose of
++        email_verify ->
++            _ = db_exec(State#state.db,
++                        <<"UPDATE portal_profiles SET pending_email = NULL "
++                          "WHERE username = ?">>, [User]);
++        _ -> ok
++    end,
++    secure_db_files(State#state.db_path).
++
++find_token(Hash, Purpose, State) ->
++    Now = now_seconds(),
++    case db_rows(State#state.db,
++      <<"SELECT username, value, expires_at FROM portal_tokens "
++        "WHERE token_hash = ? AND purpose = ?">>, [Hash, Purpose]) of
++        [{User, Value, Expires}] when is_integer(Expires),
++                                      Expires > Now ->
++            {ok, User, null_to_undefined(Value)};
++        _ -> {error, invalid_token}
++    end.
++
++confirmation_link(State, Suffix, Token) ->
++    Base = maps:get(public_base_url, State#state.opts,
++                    <<"https://xmpp.maer.fr/account">>),
++    <<Base/binary, "/", Suffix/binary, "#", Token/binary>>.
++
++send_mail(State, Recipient, Subject, Body) ->
++    MessageID = random_token(),
++    Opts = State#state.opts,
++    Timeout = maps:get(smtp_timeout, Opts, 10000),
++    Parent = self(),
++    Ref = make_ref(),
++    {Pid, Monitor} = spawn_monitor(
++      fun() ->
++          Result = maer_portal_smtp:send(Opts, Recipient, Subject, Body,
++                                         MessageID),
++          Parent ! {Ref, Result}
++      end),
++    receive
++        {Ref, Result} ->
++            erlang:demonitor(Monitor, [flush]),
++            Result;
++        {'DOWN', Monitor, process, Pid, _Reason} ->
++            {error, mail_worker_failed}
++    after Timeout + 1000 ->
++        exit(Pid, kill),
++        receive {'DOWN', Monitor, process, Pid, _} -> ok after 1000 -> ok end,
++        {error, mail_timeout}
++    end.
++
++mail_enabled(Opts) ->
++    maer_portal_smtp:configured(Opts).
++
++%%%===================================================================
++%%% SQLite helpers
++%%%===================================================================
++
++open_database(Path) when is_binary(Path) ->
++    File = binary_to_list(Path),
++    case file:read_link_info(File) of
++        {ok, _} -> open_existing_database(File, Path);
++        {error, enoent} -> open_existing_database(File, Path);
++        {error, Reason} -> {error, Reason}
++    end.
++
++open_existing_database(File, Path) ->
++    case file:read_link_info(File) of
++        {ok, #file_info{type = regular}} -> open_sqlite(File, Path);
++        {error, enoent} -> open_sqlite(File, Path);
++        {ok, _} -> {error, unsafe_database_path};
++        {error, Reason} -> {error, Reason}
++    end.
++
++open_sqlite(File, Path) ->
++    case sqlite3:open(anonymous, [{file, File}]) of
++        {ok, Db} ->
++            case initialize_schema(Db) of
++                ok -> secure_db_files(Path), {ok, Db};
++                {error, Reason} ->
++                    sqlite3:close(Db),
++                    {error, Reason}
++            end;
++        Error -> Error
++    end.
++
++initialize_schema(Db) ->
++    Statements =
++      [<<"PRAGMA trusted_schema = OFF">>,
++       <<"PRAGMA foreign_keys = ON">>,
++       <<"PRAGMA journal_mode = WAL">>,
++       <<"PRAGMA synchronous = FULL">>,
++       <<"PRAGMA busy_timeout = 5000">>,
++       <<"CREATE TABLE IF NOT EXISTS portal_profiles ("
++         "username TEXT PRIMARY KEY NOT NULL, "
++         "email TEXT, pending_email TEXT, email_verified INTEGER NOT NULL DEFAULT 0, "
++         "audio INTEGER NOT NULL DEFAULT 0, video INTEGER NOT NULL DEFAULT 0, "
++         "screen_share INTEGER NOT NULL DEFAULT 0, assistance INTEGER NOT NULL DEFAULT 0, "
++         "password_manager INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)">>,
++       <<"CREATE TABLE IF NOT EXISTS portal_tokens ("
++         "token_hash BLOB PRIMARY KEY NOT NULL, username TEXT NOT NULL, "
++         "purpose TEXT NOT NULL CHECK (purpose IN ('email_verify','password_change')), "
++         "value TEXT, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL)">>,
++       <<"CREATE INDEX IF NOT EXISTS portal_tokens_user_purpose "
++         "ON portal_tokens(username, purpose)">>],
++    initialize_statements(Db, Statements).
++
++initialize_statements(_Db, []) -> ok;
++initialize_statements(Db, [SQL | Rest]) ->
++    case db_result_ok(sqlite3:sql_exec(Db, SQL)) of
++        true -> initialize_statements(Db, Rest);
++        false -> {error, schema_initialization_failed}
++    end.
++
++ensure_profile(User, State) ->
++    Result = db_exec(State#state.db,
++      <<"INSERT OR IGNORE INTO portal_profiles (username, updated_at) "
++        "VALUES (?, ?)">>, [User, now_seconds()]),
++    secure_db_files(State#state.db_path),
++    Result.
++
++get_profile(User, State) ->
++    case ensure_profile(User, State) of
++        ok ->
++            case db_rows(State#state.db,
++              <<"SELECT email, pending_email, email_verified, audio, video, "
++                "screen_share, assistance, password_manager "
++                "FROM portal_profiles WHERE username = ?">>, [User]) of
++                [{Email, Pending, Verified, Audio, Video, Screen,
++                  Assistance, PasswordManager}] ->
++                    {ok, #{email => null_to_undefined(Email),
++                           pending_email => null_to_undefined(Pending),
++                           email_verified => int_bool(Verified),
++                           audio => int_bool(Audio), video => int_bool(Video),
++                           screen_share => int_bool(Screen),
++                           assistance => int_bool(Assistance),
++                           password_manager => int_bool(PasswordManager)}};
++                _ -> {error, unavailable}
++            end;
++        Error -> Error
++    end.
++
++transaction(Db, Fun) ->
++    case db_exec(Db, <<"BEGIN IMMEDIATE">>, []) of
++        ok ->
++            try Fun() of
++                ok ->
++                    case db_exec(Db, <<"COMMIT">>, []) of
++                        ok -> ok;
++                        Error -> _ = db_exec(Db, <<"ROLLBACK">>, []), Error
++                    end;
++                Error -> _ = db_exec(Db, <<"ROLLBACK">>, []), Error
++            catch
++                _:_ -> _ = db_exec(Db, <<"ROLLBACK">>, []),
++                       {error, transaction_failed}
++            end;
++        Error -> Error
++    end.
++
++db_exec(Db, SQL, []) ->
++    case db_result_ok(sqlite3:sql_exec(Db, SQL)) of
++        true -> ok;
++        false -> {error, database_error}
++    end;
++db_exec(Db, SQL, Params) ->
++    case db_result_ok(sqlite3:sql_exec(Db, SQL, Params)) of
++        true -> ok;
++        false -> {error, database_error}
++    end.
++
++db_rows(Db, SQL, Params) ->
++    case sqlite3:sql_exec(Db, SQL, Params) of
++        Result when is_list(Result) ->
++            case lists:any(fun is_db_error/1, Result) of
++                true -> [];
++                false -> proplists:get_value(rows, Result, [])
++            end;
++        _ -> []
++    end.
++
++db_result_ok(ok) -> true;
++db_result_ok({rowid, _}) -> true;
++db_result_ok(Result) when is_list(Result) ->
++    not lists:any(fun is_db_error/1, Result);
++db_result_ok(_) -> false.
++
++is_db_error({error, _}) -> true;
++is_db_error({error, _, _}) -> true;
++is_db_error(_) -> false.
++
++secure_db_files(Path) when is_binary(Path) ->
++    lists:foreach(
++      fun(Suffix) ->
++          File = binary_to_list(<<Path/binary, Suffix/binary>>),
++          case file:read_link_info(File) of
++              {ok, #file_info{type = regular}} ->
++                  _ = file:change_mode(File, 8#600);
++              _ -> ok
++          end
++      end, [<<>>, <<"-wal">>, <<"-shm">>]),
++    ok.
++
++%%%===================================================================
++%%% HTTP parsing and response helpers
++%%%===================================================================
++
++canonical_host(Host) ->
++    case jid:nameprep(Host) of
++        ?HOST -> true;
++        _ -> false
++    end.
++
++valid_form_request(#request{method = 'POST', length = Length,
++                            data = Data, headers = Headers}) ->
++    Length =< ?MAX_FORM_SIZE andalso byte_size(Data) =< ?MAX_FORM_SIZE andalso
++    content_type(Headers) =:= <<"application/x-www-form-urlencoded">> andalso
++    header(Headers, <<"origin">>) =:= <<"https://xmpp.maer.fr">>;
++valid_form_request(_) -> false.
++
++content_type(Headers) ->
++    Value = header(Headers, <<"content-type">>),
++    case binary:split(misc:tolower(Value), <<";">>, [trim_all]) of
++        [Type | _] -> Type;
++        [] -> <<>>
++    end.
++
++header(Headers, Wanted) ->
++    case [Value || {Name, Value} <- Headers,
++                   header_name(Name) =:= Wanted] of
++        [Value | _] -> Value;
++        [] -> <<>>
++    end.
++
++header_name(Name) when is_atom(Name) ->
++    misc:tolower(atom_to_binary(Name));
++header_name(Name) when is_binary(Name) ->
++    misc:tolower(Name).
++
++single_param(Q, Key) ->
++    case [Value || {Name, Value} <- Q, Name =:= Key, is_binary(Value)] of
++        [Value] -> {ok, Value};
++        _ -> error
++    end.
++
++checked(Q, Key) ->
++    case single_param(Q, Key) of
++        {ok, <<"on">>} -> true;
++        _ -> false
++    end.
++
++request_csrf(_Request, Q) ->
++    case single_param(Q, <<"csrf">>) of
++        {ok, Form} when byte_size(Form) =< 128 ->
++            case valid_bearer_token(Form) of
++                true -> {ok, token_hash(Form)};
++                false -> error
++            end;
++        _ -> error
++    end.
++
++authenticated_form(Request, Q) ->
++    case {cookie(Request, ?SESSION_COOKIE), request_csrf(Request, Q)} of
++        {{ok, Session}, {ok, CsrfHash}} when byte_size(Session) =< 128 ->
++            {ok, token_hash(Session), CsrfHash};
++        _ -> error
++    end.
++
++session_from_request(Request) ->
++    case cookie(Request, ?SESSION_COOKIE) of
++        {ok, Session} when byte_size(Session) =< 128 ->
++            {ok, token_hash(Session)};
++        _ -> none
++    end.
++
++cookie(#request{headers = Headers}, Name) ->
++    case header(Headers, <<"cookie">>) of
++        <<>> -> error;
++        CookieHeader -> find_cookie(binary:split(CookieHeader, <<";">>, [global]), Name)
++    end.
++
++find_cookie([], _Name) -> error;
++find_cookie([Part | Rest], Name) ->
++    Trimmed = trim_ascii(Part),
++    case binary:split(Trimmed, <<"=">>) of
++        [Name, Value] when Value =/= <<>> -> {ok, Value};
++        _ -> find_cookie(Rest, Name)
++    end.
++
++session_cookie(Token) ->
++    cookie_header(?SESSION_COOKIE, Token, session_ttl_default()).
++
++cookie_header(Name, Value, MaxAge) ->
++    {<<"Set-Cookie">>,
++     <<Name/binary, "=", Value/binary,
++       "; Path=/account; Max-Age=", (integer_to_binary(MaxAge))/binary,
++       "; Secure; HttpOnly; SameSite=Strict">>}.
++
++clear_cookies() ->
++    [{<<"Set-Cookie">>,
++      <<?SESSION_COOKIE/binary,
++        "=; Path=/account; Max-Age=0; Secure; HttpOnly; SameSite=Strict">>}].
++
++call_host(_Host, Message) ->
++    Proc = gen_mod:get_module_proc(?HOST, ?MODULE),
++    try gen_server:call(Proc, Message, 15000) of
++        Reply -> Reply
++    catch
++        exit:_ -> {error, unavailable}
++    end.
++
++serve_priv_file(Parts, ContentType) ->
++    case code:priv_dir(ejabberd) of
++        {error, _} -> not_found();
++        PrivDir ->
++            Path = filename:join([PrivDir | Parts]),
++            case file:read_file(Path) of
++                {ok, Content} ->
++                    {200, static_headers(ContentType), Content};
++                _ -> not_found()
++            end
++    end.
++
++static_headers(ContentType) ->
++    [{<<"Content-Type">>, ContentType},
++     {<<"Cache-Control">>, <<"public, max-age=3600">>},
++     {<<"X-Content-Type-Options">>, <<"nosniff">>},
++     {<<"Content-Security-Policy">>, csp()},
++     {<<"Referrer-Policy">>, <<"no-referrer">>}].
++
++html_response(Status, ExtraHeaders, Body) ->
++    {Status, ExtraHeaders ++ common_headers(), Body}.
++
++redirect(Location, CookieHeaders) ->
++    {303, [{<<"Location">>, Location} | CookieHeaders] ++ common_headers(), <<>>}.
++
++common_headers() ->
++    [{<<"Content-Type">>, <<"text/html; charset=utf-8">>},
++     {<<"Cache-Control">>, <<"no-store">>},
++     {<<"Pragma">>, <<"no-cache">>},
++     {<<"Content-Security-Policy">>, csp()},
++     {<<"Permissions-Policy">>,
++      <<"camera=(), microphone=(), display-capture=(), geolocation=()">>},
++     {<<"Referrer-Policy">>, <<"no-referrer">>},
++     {<<"Strict-Transport-Security">>, <<"max-age=31536000">>},
++     {<<"X-Content-Type-Options">>, <<"nosniff">>},
++     {<<"X-Frame-Options">>, <<"DENY">>}].
++
++csp() ->
++    <<"default-src 'none'; img-src 'self'; style-src 'self'; "
++      "script-src 'self'; form-action 'self'; frame-ancestors 'none'; "
++      "base-uri 'none'">>.
++
++not_found() ->
++    html_response(404, [], message_page(<<"Page introuvable">>,
++                                        <<"Cette page n’existe pas.">>)).
++
++bad_request() ->
++    html_response(400, [], message_page(<<"Requête refusée">>,
++                                        <<"Rechargez la page puis réessayez.">>)).
++
++unavailable() ->
++    html_response(503, [], message_page(<<"Service indisponible">>,
++                                        <<"Le portail ne peut pas traiter cette demande maintenant.">>)).
++
++rate_limited() ->
++    html_response(429, [{<<"Retry-After">>, <<"3600">>}],
++                  message_page(<<"Trop de demandes">>,
++                               <<"Réessayez dans quelques instants.">>)).
++
++session_expired() ->
++    html_response(401, clear_cookies(),
++                  message_page(<<"Session expirée">>,
++                               <<"Reconnectez-vous pour continuer.">>)).
++
++invalid_link() ->
++    html_response(400, [], message_page(<<"Lien invalide">>,
++      <<"Ce lien est expiré, déjà utilisé ou ne correspond plus à la demande active.">>)).
++
++%%%===================================================================
++%%% HTML rendering
++%%%===================================================================
++
++login_response(Host, IP, Status, Message) ->
++    case call_host(Host, {new_preauth, IP}) of
++        {ok, Csrf} ->
++            html_response(Status, [], login_page(Csrf, Message));
++        _ -> unavailable()
++    end.
++
++login_page(Csrf, Message) ->
++    page(<<"Connexion">>,
++      [notice(Message),
++       <<"<section class=\"card auth-card\"><h1>Espace compte</h1>"
++         "<p class=\"lead\">Connectez-vous avec votre identifiant MAER Chat.</p>"
++         "<form method=\"post\" action=\"/account/login\" autocomplete=\"on\">">>,
++       hidden_csrf(Csrf),
++       <<"<label for=\"username\">Identifiant</label>"
++         "<div class=\"jid-input\"><input id=\"username\" name=\"username\" "
++         "required maxlength=\"64\" autocomplete=\"username\" "
++         "autocapitalize=\"none\" spellcheck=\"false\">"
++         "<span>@xmpp.maer.fr</span></div>"
++         "<label for=\"password\">Mot de passe</label>"
++         "<input id=\"password\" name=\"password\" type=\"password\" required "
++         "maxlength=\"1024\" autocomplete=\"current-password\">"
++         "<button class=\"primary\" type=\"submit\">Se connecter</button>"
++         "</form></section>">>]).
++
++dashboard_response(User, Profile, Csrf, MailEnabled, Message) ->
++    Email = maps:get(email, Profile, undefined),
++    Pending = maps:get(pending_email, Profile, undefined),
++    Verified = maps:get(email_verified, Profile, false),
++    page(<<"Mon compte">>,
++      [<<"<div class=\"dashboard-head\"><div><p class=\"eyebrow\">Espace compte</p>"
++         "<h1>">>, html_escape(User), <<"@xmpp.maer.fr</h1></div>"
++         "<form method=\"post\" action=\"/account/logout\">">>,
++       hidden_csrf(Csrf),
++       <<"<button class=\"quiet\" type=\"submit\">Se déconnecter</button>"
++         "</form></div>">>,
++       notice(Message),
++       <<"<div class=\"grid\"><section class=\"card\"><h2>Adresse email</h2>">>,
++       email_status(Email, Pending, Verified),
++       <<"<form method=\"post\" action=\"/account/email\">">>,
++       hidden_csrf(Csrf),
++       <<"<label for=\"email\">Nouvelle adresse</label>"
++         "<input id=\"email\" name=\"email\" type=\"email\" required "
++         "maxlength=\"254\" autocomplete=\"email\" placeholder=\"vous@exemple.fr\"">>,
++       disabled_submit(<<"Envoyer le lien de vérification">>, MailEnabled),
++       <<"</form></section><section class=\"card\"><h2>Sécurité</h2>"
++         "<p>Le changement de mot de passe exige un lien envoyé à l’adresse vérifiée. "
++         "Le nouveau mot de passe n’est jamais placé dans l’email.</p>"
++         "<form method=\"post\" action=\"/account/password\">">>,
++       hidden_csrf(Csrf),
++       disabled_submit(<<"Confirmer par email">>,
++                       MailEnabled andalso Verified andalso Email =/= undefined),
++       <<"</form></section></div>"
++         "<section class=\"card preferences\"><h2>Préférences de services</h2>"
++         "<p class=\"muted\">Aucune facturation n’est activée. Ces choix préparent "
++         "les services visibles dans les clients MAER Chat compatibles.</p>"
++         "<form method=\"post\" action=\"/account/options\">">>,
++       hidden_csrf(Csrf),
++       feature_toggle(<<"audio">>, <<"Appels audio">>,
++                      <<"Autoriser les fonctions d’appel vocal.">>,
++                      maps:get(audio, Profile, false)),
++       feature_toggle(<<"video">>, <<"Appels vidéo">>,
++                      <<"Autoriser les fonctions d’appel avec caméra.">>,
++                      maps:get(video, Profile, false)),
++       feature_toggle(<<"screen_share">>, <<"Partage d’écran">>,
++                      <<"Autoriser la proposition de partage d’écran.">>,
++                      maps:get(screen_share, Profile, false)),
++       feature_toggle(<<"assistance">>, <<"MAER Assistance">>,
++                      <<"Afficher l’accès aux services d’assistance MAER.">>,
++                      maps:get(assistance, Profile, false)),
++       feature_toggle(<<"password_manager">>,
++                      <<"Gestionnaire de mots de passe">>,
++                      <<"Afficher l’intégration au gestionnaire de mots de passe.">>,
++                      maps:get(password_manager, Profile, false)),
++       <<"<button class=\"primary\" type=\"submit\">Enregistrer les préférences</button>"
++         "</form></section>">>]).
++
++email_status(undefined, undefined, _Verified) ->
++    <<"<p class=\"status neutral\">Aucune adresse associée.</p>">>;
++email_status(Email, Pending, Verified) ->
++    [case Email of
++         undefined -> <<>>;
++         _ -> [<<"<p class=\"status ">>,
++               case Verified of true -> <<"success">>; false -> <<"neutral">> end,
++               <<"\">Adresse actuelle : <strong>">>, html_escape(Email),
++               case Verified of
++                   true -> <<"</strong> · vérifiée</p>">>;
++                   false -> <<"</strong> · non vérifiée</p>">>
++               end]
++     end,
++     case Pending of
++         undefined -> <<>>;
++         _ -> [<<"<p class=\"status pending\">Vérification en attente : <strong>">>,
++               html_escape(Pending), <<"</strong></p>">>]
++     end].
++
++verify_email_page(Csrf) ->
++    page(<<"Vérifier mon email">>,
++      [<<"<section class=\"card auth-card\"><h1>Vérifier mon email</h1>"
++         "<p>Le jeton reste dans votre navigateur et n’apparaît pas dans les logs du serveur.</p>"
++         "<form method=\"post\" action=\"/account/verify-email\" data-fragment-form>">>,
++       hidden_csrf(Csrf),
++       <<"<input type=\"hidden\" name=\"token\" data-fragment-token>"
++         "<noscript><p class=\"status pending\">JavaScript est nécessaire pour lire "
++         "le jeton protégé placé dans le fragment du lien.</p></noscript>"
++         "<p class=\"status neutral\" data-fragment-status>Lecture du lien…</p>"
++         "<button class=\"primary\" type=\"submit\" disabled data-fragment-submit>"
++         "Vérifier l’adresse</button></form></section>">>]).
++
++password_page(User, Csrf) ->
++    page(<<"Nouveau mot de passe">>,
++      [<<"<section class=\"card auth-card\"><p class=\"eyebrow\">Compte</p><h1>">>,
++       html_escape(User),
++       <<"@xmpp.maer.fr</h1><p>Saisissez le nouveau mot de passe après avoir ouvert "
++         "le lien reçu par email.</p>"
++         "<form method=\"post\" action=\"/account/password/confirm\" "
++         "data-fragment-form autocomplete=\"off\">">>,
++       hidden_csrf(Csrf),
++       <<"<input type=\"hidden\" name=\"token\" data-fragment-token>"
++         "<noscript><p class=\"status pending\">JavaScript est nécessaire pour lire "
++         "le jeton protégé placé dans le fragment du lien.</p></noscript>"
++         "<label for=\"new-password\">Nouveau mot de passe</label>"
++         "<input id=\"new-password\" type=\"password\" name=\"password\" "
++         "required minlength=\"12\" maxlength=\"1024\" autocomplete=\"new-password\">"
++         "<label for=\"confirmation\">Confirmer le mot de passe</label>"
++         "<input id=\"confirmation\" type=\"password\" name=\"confirmation\" "
++         "required minlength=\"12\" maxlength=\"1024\" autocomplete=\"new-password\">"
++         "<p class=\"status neutral\" data-fragment-status>Lecture du lien…</p>"
++         "<button class=\"primary\" type=\"submit\" disabled data-fragment-submit>"
++         "Changer le mot de passe</button></form></section>">>]).
++
++message_page(Title, Message) ->
++    page(Title,
++      [<<"<section class=\"card auth-card\"><h1>">>, html_escape(Title),
++       <<"</h1><p>">>, html_escape(Message),
++       <<"</p><p><a class=\"button-link\" href=\"/account/\">Retour à mon compte</a>"
++         "</p></section>">>]).
++
++page(Title, Content) ->
++    iolist_to_binary(
++      [<<"<!doctype html><html lang=\"fr\"><head><meta charset=\"utf-8\">"
++         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
++         "<meta name=\"color-scheme\" content=\"light\">"
++         "<title>">>, html_escape(Title),
++       <<" · MAER Chat</title><link rel=\"stylesheet\" "
++         "href=\"/account/assets/portal.css\">"
++         "<script src=\"/account/assets/portal.js\" defer></script></head><body>"
++         "<header class=\"site-header\"><a href=\"/account/\" aria-label=\"MAER Chat — accueil\">"
++         "<img src=\"/account/assets/logo.png\" alt=\"MAER Chat\"></a></header>"
++         "<main id=\"main\">">>, Content,
++       <<"</main><footer>MAER Chat · Messagerie privée</footer></body></html>">>]).
++
++notice(undefined) -> <<>>;
++notice(<<>>) -> <<>>;
++notice(Message) ->
++    [<<"<div class=\"notice\" role=\"status\">">>, html_escape(Message), <<"</div>">>].
++
++hidden_csrf(Token) ->
++    [<<"<input type=\"hidden\" name=\"csrf\" value=\"">>,
++     html_escape(Token), <<"\">">>].
++
++disabled_submit(Label, true) ->
++    [<<"<button class=\"primary\" type=\"submit\">">>,
++     html_escape(Label), <<"</button>">>];
++disabled_submit(Label, false) ->
++    [<<"<button class=\"primary\" type=\"submit\" disabled>">>,
++     html_escape(Label), <<"</button>"
++       "<p class=\"hint\">La messagerie email doit être configurée par l’opérateur.</p>">>].
++
++feature_toggle(Name, Label, Description, Checked) ->
++    [<<"<label class=\"toggle\"><span><strong>">>, html_escape(Label),
++     <<"</strong><small>">>, html_escape(Description),
++     <<"</small></span><input type=\"checkbox\" name=\"">>, html_escape(Name),
++     <<"\"">>, case Checked of true -> <<" checked">>; false -> <<>> end,
++     <<"><span class=\"switch\" aria-hidden=\"true\"></span></label>">>].
++
++html_escape(Value) when is_binary(Value) ->
++    V1 = binary:replace(Value, <<"&">>, <<"&amp;">>, [global]),
++    V2 = binary:replace(V1, <<"<">>, <<"&lt;">>, [global]),
++    V3 = binary:replace(V2, <<">">>, <<"&gt;">>, [global]),
++    V4 = binary:replace(V3, <<"\"">>, <<"&quot;">>, [global]),
++    binary:replace(V4, <<"'">>, <<"&#39;">>, [global]).
++
++%%%===================================================================
++%%% Validation and crypto helpers
++%%%===================================================================
++
++normalize_username(User0) when is_binary(User0), byte_size(User0) >= 1,
++                                        byte_size(User0) =< 64 ->
++    User = misc:tolower(trim_ascii(User0)),
++    case re:run(User, <<"^[a-z0-9][a-z0-9._-]{0,63}$">>,
++                [{capture, none}]) of
++        match ->
++            case jid:nodeprep(User) of
++                User -> {ok, User};
++                _ -> error
++            end;
++        nomatch -> error
++    end;
++normalize_username(_) -> error.
++
++normalize_email(Email0) when is_binary(Email0) ->
++    Email = misc:tolower(trim_ascii(Email0)),
++    case byte_size(Email) >= 3 andalso byte_size(Email) =< 254 andalso
++         re:run(Email,
++           <<"^[a-z0-9.!#$%&'*+/=?^_{}|~-]+@[a-z0-9]"
++             "(?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9]"
++             "(?:[a-z0-9-]{0,61}[a-z0-9])?)+$">>,
++           [{capture, none}]) =:= match of
++        true -> {ok, Email};
++        false -> error
++    end;
++normalize_email(_) -> error.
++
++valid_password(Password, Confirmation) ->
++    is_binary(Password) andalso is_binary(Confirmation) andalso
++    byte_size(Password) >= 12 andalso byte_size(Password) =< 1024 andalso
++    secure_equal(Password, Confirmation) andalso
++    re:run(Password, <<"[\\x00\\r\\n]">>, [{capture, none}]) =:= nomatch.
++
++valid_bearer_token(Token) when is_binary(Token), byte_size(Token) =:= 43 ->
++    re:run(Token, <<"^[A-Za-z0-9_-]{43}$">>, [{capture, none}]) =:= match;
++valid_bearer_token(_) -> false.
++
++random_token() ->
++    base64url(crypto:strong_rand_bytes(32)).
++
++base64url(Value) ->
++    Encoded = base64:encode(Value),
++    URL1 = binary:replace(Encoded, <<"+">>, <<"-">>, [global]),
++    URL2 = binary:replace(URL1, <<"/">>, <<"_">>, [global]),
++    binary:replace(URL2, <<"=">>, <<>>, [global]).
++
++token_hash(Token) -> crypto:hash(sha256, Token).
++
++secure_equal(A, B) when is_binary(A), is_binary(B),
++                        byte_size(A) =:= byte_size(B) ->
++    crypto:hash_equals(A, B);
++secure_equal(_, _) -> false.
++
++trim_ascii(Value) ->
++    trim_ascii_right(trim_ascii_left(Value)).
++
++trim_ascii_left(<<C, Rest/binary>>) when C =:= $ ; C =:= $\t ->
++    trim_ascii_left(Rest);
++trim_ascii_left(Value) -> Value.
++
++trim_ascii_right(Value) ->
++    case Value of
++        <<Rest:(byte_size(Value) - 1)/binary, C>>
++          when byte_size(Value) > 0, (C =:= $  orelse C =:= $\t) ->
++            trim_ascii_right(Rest);
++        _ -> Value
++    end.
++
++bool_int(true) -> 1;
++bool_int(false) -> 0.
++
++int_bool(0) -> false;
++int_bool(_) -> true.
++
++null_to_undefined(null) -> undefined;
++null_to_undefined(Value) -> Value.
++
++now_seconds() -> erlang:system_time(second).
++
++session_ttl_default() -> 86400.
++
++-ifdef(TEST).
++-include_lib("eunit/include/eunit.hrl").
++
++username_validation_test() ->
++    ?assertEqual({ok, <<"alice-42">>}, normalize_username(<<" Alice-42 ">>)),
++    ?assertEqual(error, normalize_username(<<"alice@xmpp.maer.fr">>)),
++    ?assertEqual(error, normalize_username(<<"../alice">>)).
++
++email_validation_test() ->
++    ?assertEqual({ok, <<"alice@example.org">>},
++                 normalize_email(<<" Alice@Example.ORG ">>)),
++    ?assertEqual(error, normalize_email(<<"alice@example">>)),
++    ?assertEqual(error,
++                 normalize_email(<<"alice@example.org\r\nBcc:x@example.org">>)).
++
++password_policy_test() ->
++    ?assert(valid_password(<<"correct horse battery staple">>,
++                           <<"correct horse battery staple">>)),
++    ?assertNot(valid_password(<<"too-short">>, <<"too-short">>)),
++    ?assertNot(valid_password(<<"correct horse battery staple">>,
++                              <<"different horse battery staple">>)).
++
++html_escape_test() ->
++    ?assertEqual(<<"&lt;&amp;&quot;&#39;&gt;">>, html_escape(<<"<&\"'>">>)).
++
++cookie_parse_test() ->
++    Request = #request{headers = [{<<"Cookie">>,
++                                   <<"a=1; maer_portal_session=secret; b=2">>}]},
++    ?assertEqual({ok, <<"secret">>}, cookie(Request, ?SESSION_COOKIE)).
++
++content_type_is_total_test() ->
++    ?assertEqual(<<>>, content_type([])),
++    ?assertEqual(<<"application/x-www-form-urlencoded">>,
++                 content_type([{<<"Content-Type">>,
++                                <<"application/x-www-form-urlencoded; charset=UTF-8">>}])).
++
++token_shape_test() ->
++    Token = random_token(),
++    ?assertEqual(43, byte_size(Token)),
++    ?assert(valid_bearer_token(Token)).
++
++sqlite_profile_round_trip_test() ->
++    {ok, _} = application:ensure_all_started(sqlite3),
++    Dir = filename:join("/tmp", "maer-portal-" ++
++                        integer_to_list(erlang:unique_integer([positive]))),
++    ok = file:make_dir(Dir),
++    Path = list_to_binary(filename:join(Dir, "portal.sqlite")),
++    try
++        {ok, Db} = open_database(Path),
++        Sessions = ets:new(test_portal_sessions,
++                           [set, private, {keypos, #session.hash}]),
++        Preauth = ets:new(test_portal_preauth, [set, private]),
++        Rates = ets:new(test_portal_rates, [set, private]),
++        State = #state{opts = maps:from_list(mod_options(?HOST)), db = Db,
++                       db_path = Path, sessions = Sessions,
++                       preauth = Preauth, rates = Rates},
++        {ok, Profile} = update_options(
++                          <<"alice">>,
++                          #{audio => true, video => false,
++                            screen_share => true, assistance => true,
++                            password_manager => false}, State),
++        ?assertEqual(true, maps:get(audio, Profile)),
++        ?assertEqual(false, maps:get(video, Profile)),
++        ?assertEqual(true, maps:get(screen_share, Profile)),
++        {ok, SessionToken} = create_session(<<"alice">>, State),
++        SessionHash = token_hash(SessionToken),
++        {ok, <<"alice">>, _SessionProfile, false, CsrfToken} =
++            lookup_session(SessionHash, true, State),
++        ?assertEqual(ok,
++          with_authenticated_session(SessionHash, token_hash(CsrfToken), State,
++                                     fun(<<"alice">>) -> ok end)),
++        ?assertEqual(1, length(clear_cookies())),
++        Token = random_token(),
++        Hash = token_hash(Token),
++        ok = db_exec(Db,
++          <<"INSERT INTO portal_tokens "
++            "(token_hash, username, purpose, value, expires_at, created_at) "
++            "VALUES (?, ?, 'email_verify', ?, ?, ?)">>,
++          [Hash, <<"alice">>, <<"alice@example.org">>,
++           now_seconds() + 60, now_seconds()]),
++        ?assertEqual({ok, <<"alice">>, <<"alice@example.org">>},
++                     find_token(Hash, <<"email_verify">>, State)),
++        ok = sqlite3:close(Db)
++    after
++        _ = file:del_dir_r(Dir)
++    end.
++
++csrf_is_single_use_and_ip_bound_test() ->
++    Preauth = ets:new(test_preauth_security, [set, private]),
++    State = #state{preauth = Preauth},
++    Token = random_token(),
++    Hash = token_hash(Token),
++    IP = {192, 0, 2, 10},
++    ets:insert(Preauth, {Hash, IP, now_seconds() + 60}),
++    ?assertNot(consume_preauth(Hash, {192, 0, 2, 11}, State)),
++    ets:insert(Preauth, {Hash, IP, now_seconds() + 60}),
++    ?assert(consume_preauth(Hash, IP, State)),
++    ?assertNot(consume_preauth(Hash, IP, State)).
++
++-endif.
+diff --git a/priv/maer_portal/portal.css b/priv/maer_portal/portal.css
+new file mode 100644
+index 00000000..4f80b90c
+--- /dev/null
++++ b/priv/maer_portal/portal.css
+@@ -0,0 +1,155 @@
++:root {
++  color: #172230;
++  background: #eef5f4;
++  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
++  font-synthesis: none;
++  line-height: 1.5;
++  --maer: #49cbc1;
++  --maer-dark: #167f79;
++  --ink: #172230;
++  --slate: #30353e;
++  --line: #d6e4e2;
++  --surface: #ffffff;
++  --muted: #5b6875;
++}
++
++* { box-sizing: border-box; }
++
++body {
++  min-height: 100vh;
++  margin: 0;
++  display: flex;
++  flex-direction: column;
++  background:
++    radial-gradient(circle at 10% -20%, rgba(73, 203, 193, .26), transparent 36rem),
++    #eef5f4;
++}
++
++.site-header {
++  min-height: 4.5rem;
++  display: flex;
++  align-items: center;
++  padding: .75rem clamp(1rem, 4vw, 3rem);
++  background: var(--slate);
++  border-bottom: .25rem solid var(--maer);
++}
++
++.site-header a { display: inline-flex; }
++.site-header img { display: block; width: auto; max-width: 15rem; height: 2.5rem; object-fit: contain; }
++
++main {
++  width: min(70rem, calc(100% - 2rem));
++  margin: 0 auto;
++  padding: clamp(2rem, 5vw, 4rem) 0;
++  flex: 1;
++}
++
++footer {
++  padding: 1.25rem;
++  color: #dcebea;
++  background: var(--slate);
++  text-align: center;
++  font-size: .875rem;
++}
++
++h1, h2 { color: var(--ink); line-height: 1.15; }
++h1 { margin: .25rem 0 1rem; font-size: clamp(1.8rem, 5vw, 2.75rem); }
++h2 { margin: 0 0 1rem; font-size: 1.25rem; }
++p { margin: .5rem 0 1.25rem; }
++a { color: #096b66; text-underline-offset: .18em; }
++
++.lead { color: var(--muted); font-size: 1.05rem; }
++.muted, .hint { color: var(--muted); }
++.hint { margin-top: .5rem; font-size: .85rem; }
++.eyebrow { margin: 0; color: var(--maer-dark); font-size: .78rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
++
++.card {
++  padding: clamp(1.25rem, 4vw, 2rem);
++  background: var(--surface);
++  border: 1px solid var(--line);
++  border-radius: 1.1rem;
++  box-shadow: 0 .75rem 2.5rem rgba(31, 62, 67, .08);
++}
++
++.auth-card { width: min(32rem, 100%); margin: 0 auto; }
++.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
++.preferences { margin-top: 1rem; }
++.dashboard-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
++
++form { display: grid; gap: .75rem; }
++label { font-weight: 700; }
++input[type="text"], input[type="email"], input[type="password"], input:not([type]) {
++  width: 100%;
++  min-height: 3rem;
++  padding: .7rem .85rem;
++  color: var(--ink);
++  background: #fff;
++  border: 1px solid #9db4b2;
++  border-radius: .65rem;
++  font: inherit;
++}
++
++input:focus-visible, button:focus-visible, a:focus-visible {
++  outline: .2rem solid #116f69;
++  outline-offset: .2rem;
++}
++
++.jid-input { display: flex; align-items: center; background: #f7fbfa; border-radius: .65rem; }
++.jid-input input { border-radius: .65rem 0 0 .65rem; }
++.jid-input span { padding: 0 .75rem; color: #47545f; font-size: .9rem; white-space: nowrap; }
++
++button, .button-link {
++  min-height: 2.8rem;
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  padding: .7rem 1rem;
++  border: 0;
++  border-radius: .65rem;
++  font: inherit;
++  font-weight: 800;
++  cursor: pointer;
++}
++
++button.primary, .button-link { color: #0b2927; background: var(--maer); text-decoration: none; }
++button.primary:hover, .button-link:hover { background: #61d7ce; }
++button.quiet { color: #27363e; background: #dfecea; }
++button:disabled { cursor: not-allowed; filter: grayscale(.6); opacity: .55; }
++
++.notice, .status { padding: .8rem 1rem; border-radius: .7rem; }
++.notice { margin-bottom: 1rem; color: #073d39; background: #cef2ee; border-left: .3rem solid var(--maer-dark); }
++.status { background: #eff4f4; }
++.status.success { color: #165b33; background: #e5f6eb; }
++.status.pending { color: #724d03; background: #fff3d6; }
++.status.neutral { color: #44515b; }
++
++.toggle {
++  min-height: 4.5rem;
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 1rem;
++  padding: .8rem 0;
++  border-top: 1px solid var(--line);
++  cursor: pointer;
++}
++
++.toggle small { display: block; margin-top: .2rem; color: var(--muted); font-weight: 400; }
++.toggle input { position: absolute; opacity: 0; pointer-events: none; }
++.switch { width: 3.1rem; height: 1.75rem; flex: 0 0 auto; position: relative; background: #879593; border-radius: 2rem; transition: background .15s ease; }
++.switch::after { content: ""; width: 1.3rem; height: 1.3rem; position: absolute; top: .225rem; left: .25rem; background: #fff; border-radius: 50%; box-shadow: 0 .1rem .25rem rgba(0, 0, 0, .25); transition: transform .15s ease; }
++.toggle input:checked + .switch { background: var(--maer-dark); }
++.toggle input:checked + .switch::after { transform: translateX(1.3rem); }
++.toggle input:focus-visible + .switch { outline: .2rem solid #116f69; outline-offset: .2rem; }
++
++@media (max-width: 45rem) {
++  .grid { grid-template-columns: 1fr; }
++  .dashboard-head { flex-direction: column; }
++  .jid-input { display: block; background: transparent; }
++  .jid-input input { border-radius: .65rem; }
++  .jid-input span { display: block; padding: .35rem 0 0; }
++}
++
++@media (prefers-reduced-motion: reduce) {
++  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
++}
+diff --git a/priv/maer_portal/portal.js b/priv/maer_portal/portal.js
+new file mode 100644
+index 00000000..f207c5ec
+--- /dev/null
++++ b/priv/maer_portal/portal.js
+@@ -0,0 +1,25 @@
++(() => {
++  "use strict";
++
++  const form = document.querySelector("[data-fragment-form]");
++  if (!form) return;
++
++  const token = window.location.hash.slice(1);
++  const input = form.querySelector("[data-fragment-token]");
++  const submit = form.querySelector("[data-fragment-submit]");
++  const status = form.querySelector("[data-fragment-status]");
++  const valid = /^[A-Za-z0-9_-]{43}$/.test(token);
++
++  history.replaceState(null, "", window.location.pathname);
++  if (valid) {
++    input.value = token;
++    submit.disabled = false;
++    status.textContent = "Lien prêt. Vous pouvez confirmer.";
++    status.className = "status success";
++  } else {
++    input.value = "";
++    submit.disabled = true;
++    status.textContent = "Le lien ne contient pas de jeton valide.";
++    status.className = "status pending";
++  }
++})();

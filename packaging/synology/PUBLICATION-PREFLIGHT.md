@@ -26,7 +26,8 @@ xmpp.maer.fr`, accepter WebSocket et ne publier que ces préfixes :
 - `/http-bind` ;
 - `/xmpp-websocket` ;
 - `/upload` ;
-- `/maer-pairing`.
+- `/maer-pairing` ;
+- `/account`.
 
 Créer également une règle HTTP publique sur `xmpp.maer.fr:80` vers
 `http://127.0.0.1:5080`. Ce backend dédié ne sert aucun contenu : il répond
@@ -34,8 +35,9 @@ uniquement `301 Location: https://xmpp.maer.fr/`.
 
 Ne jamais publier `/admin`, `/api` ou le port 5280. Remplacer les en-têtes
 d'adresse client à l'entrée du proxy au lieu de concaténer une valeur fournie
-par le client. Limiter les corps de `/maer-pairing` à 16 Kio et appliquer une
-seconde limitation de débit. Le certificat public et le PEM du backend doivent
+par le client. Limiter les corps de `/maer-pairing` à 16 Kio, ceux de
+`/account` à 8 Kio et appliquer une seconde limitation de débit. Le certificat
+public et le PEM du backend doivent
 couvrir `xmpp.maer.fr`; le proxy doit vérifier le certificat du backend.
 
 Le serveur ne fait confiance pour `X-Forwarded-For` qu'aux réseaux loopback
@@ -46,8 +48,7 @@ client. La confiance globale `all` est interdite.
 Le proxy doit remplacer les éventuels en-têtes amont avec les valeurs suivantes :
 
 ```text
-Access-Control-Allow-Origin: https://xmpp.maer.fr
-Content-Security-Policy: default-src 'none'; frame-ancestors 'none'
+Access-Control-Allow-Origin: maer-chat://app
 Referrer-Policy: no-referrer
 Strict-Transport-Security: max-age=31536000
 Vary: Origin
@@ -55,10 +56,19 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
 ```
 
-Le serveur vérifie en plus l'en-tête de poignée de main WebSocket avec
-`websocket_origin: https://xmpp.maer.fr`. Une origine de navigateur différente
-doit recevoir un refus 403 ; les clients natifs sans en-tête `Origin` restent
-acceptés par ejabberd.
+Ne pas imposer de CSP globale au niveau du proxy : `/account` renvoie sa CSP
+autorisant uniquement ses propres images, styles et scripts, tandis que
+`mod_http_upload` renvoie `sandbox; default-src 'none'`. Une CSP globale
+écraserait ce sandbox et pourrait donner une origine active à un fichier
+utilisateur servi sous `/upload`.
+
+Le serveur vérifie en plus l'en-tête de poignée de main WebSocket. Les deux
+origines autorisées sont la page web same-origin `https://xmpp.maer.fr` et le
+schéma privilégié du client Electron `maer-chat://app`. `file://`, `null` et
+toute autre origine doivent recevoir un refus 403 ; les clients natifs sans
+en-tête `Origin` restent acceptés par ejabberd. BOSH, HTTP Upload et Pairing
+renvoient `Access-Control-Allow-Origin: maer-chat://app` pour le repli Electron ;
+la page web n'a pas besoin de CORS puisqu'elle est same-origin.
 
 Le port 80 doit rediriger en 301/308 vers HTTPS, à l'exception éventuelle d'un
 chemin ACME strictement borné. Le pare-feu et la redirection NAT doivent exposer
