@@ -18,6 +18,7 @@
 	 mod_opt_type/1, mod_options/1, mod_doc/0]).
 -export([process/2, process_iq/1, decode_iq_subel/1]).
 -export([oauth_authenticated/4, revoke_user_devices/2]).
+-export([operator_bootstrap_admin/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
@@ -37,6 +38,62 @@
 -define(MAX_APP_VERSION_BYTES, 40).
 -define(SPKI_PREFIX, <<16#30, 16#2A, 16#30, 16#05, 16#06, 16#03,
 		       16#2B, 16#65, 16#70, 16#03, 16#21, 16#00>>).
+
+operator_bootstrap_admin(Password)
+  when is_binary(Password), byte_size(Password) >= 12,
+       byte_size(Password) =< 1024 ->
+    User = <<"admin">>,
+    Host = ?CANONICAL_HOST,
+    case ejabberd_auth:user_exists(User, Host) of
+        true -> verify_existing_admin(User, Host, Password);
+        false ->
+            case ejabberd_auth:try_register(User, Host, Password) of
+                ok -> verify_created_admin(User, Host, Password);
+                {error, exists} -> verify_existing_admin(User, Host, Password);
+                Error -> Error
+            end
+    end;
+operator_bootstrap_admin(_) ->
+    {error, invalid_password}.
+
+verify_created_admin(User, Host, Password) ->
+    case verify_admin_credentials(User, Host, Password) of
+        ok -> {ok, created};
+        {error, Reason} ->
+            ejabberd_auth:remove_user(User, Host),
+            case ejabberd_auth:user_exists(User, Host) of
+                false -> {error, {validation_failed, Reason}};
+                true -> {error, rollback_failed}
+            end
+    end.
+
+verify_existing_admin(User, Host, Password) ->
+    case verify_admin_credentials(User, Host, Password) of
+        ok -> {ok, existing};
+        {error, _} -> {error, exists}
+    end.
+
+verify_admin_credentials(User, Host, Password) ->
+    try
+        Stored = ejabberd_auth:get_password(User, Host),
+        case is_list(Stored) andalso Stored =/= [] andalso
+             lists:all(fun is_strict_scram_sha256/1, Stored) andalso
+             ejabberd_auth:check_password(User, <<>>, Host, Password) of
+            true -> ok;
+            false -> {error, credential_mismatch}
+        end
+    catch _:_ ->
+        {error, credential_validation_failed}
+    end.
+
+is_strict_scram_sha256(T) ->
+    is_tuple(T) andalso tuple_size(T) =:= 6 andalso
+    element(1, T) =:= scram andalso
+    is_binary(element(2, T)) andalso byte_size(element(2, T)) > 0 andalso
+    is_binary(element(3, T)) andalso byte_size(element(3, T)) > 0 andalso
+    is_binary(element(4, T)) andalso byte_size(element(4, T)) > 0 andalso
+    element(5, T) =:= sha256 andalso
+    is_integer(element(6, T)) andalso element(6, T) >= 4096.
 
 -record(pair_session,
 	{id                    :: binary(),
@@ -790,10 +847,13 @@ handle_pairing_iq(#iq{from = From, to = To} = IQ, State) ->
 	    case allow_iq_request(BareJID, State) of
 		true -> handle_authorized_iq(IQ, State);
 		false ->
-		    {xmpp:make_error(IQ, xmpp:err_resource_constraint()), State}
+		    {iq_rate_limit_error(IQ), State}
 	    end;
 	false -> {xmpp:make_error(IQ, xmpp:err_forbidden()), State}
     end.
+
+iq_rate_limit_error(IQ) ->
+    xmpp:make_error(IQ, xmpp:err_policy_violation()).
 
 authorized_local_account(
   #jid{luser = LUser, lserver = Host, lresource = Resource},
@@ -884,7 +944,7 @@ approve_session(IQ, From, ID, Code,
 			    {xmpp:make_iq_result(IQ, Result), State};
 			{error, device_limit} ->
 			    revoke_token(Token),
-			    {xmpp:make_error(IQ, xmpp:err_resource_constraint()), State};
+			    {iq_device_limit_error(IQ), State};
 			{error, _} ->
 			    revoke_token(Token),
 			    {xmpp:make_error(
@@ -898,6 +958,9 @@ approve_session(IQ, From, ID, Code,
 	error ->
 	    {xmpp:make_error(IQ, xmpp:err_item_not_found()), State}
     end.
+
+iq_device_limit_error(IQ) ->
+    xmpp:make_error(IQ, xmpp:err_resource_constraint()).
 
 devices_iq(#iq{from = From} = IQ, El, State) ->
     case iq_request_attrs(<<"devices">>, [], El) of
@@ -1557,6 +1620,18 @@ http_global_rate_limit_test() ->
     ?assert(allow_http_request({127, 0, 0, 2}, State)),
     ?assertNot(allow_http_request({127, 0, 0, 3}, State)),
     ets:delete(Table).
+
+iq_rate_limit_condition_test() ->
+    IQ = #iq{type = get, id = <<"rate-limit-test">>},
+    ErrorIQ = iq_rate_limit_error(IQ),
+    #stanza_error{reason = 'policy-violation'} = xmpp:get_error(ErrorIQ),
+    ok.
+
+iq_device_limit_condition_test() ->
+    IQ = #iq{type = set, id = <<"device-limit-test">>},
+    ErrorIQ = iq_device_limit_error(IQ),
+    #stanza_error{reason = 'resource-constraint'} = xmpp:get_error(ErrorIQ),
+    ok.
 
 signed_poll_and_cancel_flow_test() ->
     Sessions = ets:new(maer_pairing_session_flow_test,

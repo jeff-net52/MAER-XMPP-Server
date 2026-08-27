@@ -10,7 +10,7 @@ sur un NAS.
 |---|---|
 | Identifiant | `maerxmppserver` |
 | Nom affiché | `MAER XMPP Server` |
-| Version SPK | `26.07.0-2` |
+| Version SPK | `26.07.0-4` |
 | Architecture | `armada38x` uniquement |
 | DSM minimal | `7.2-72806` |
 | Compte de service | `sc-maerxmppserver`, jamais `root` |
@@ -18,7 +18,7 @@ sur un NAS.
 
 `spksrc` génère `conf/privilege` à partir de `SERVICE_USER = auto`. Pour DSM 7,
 le contrat résultant est `run-as: package`, utilisateur
-`sc-maerxmppserver`, groupe `synocommunity`. Aucun fichier `privilege` manuel
+`sc-maerxmppserver`, groupe isolé `sc-maerxmppserver`. Aucun fichier `privilege` manuel
 n'est copié afin d'éviter deux producteurs concurrents du même artefact.
 Les champs `distributor` et `distributor_url` de `INFO` sont imposés par la
 recette du paquet afin qu'un `local.mk` global de l'environnement `spksrc` ne
@@ -39,22 +39,48 @@ Le code en lecture seule est installé sous
 | Chemin | Usage | Mode créé |
 |---|---|---|
 | `config` | `ejabberd.yml`, `ejabberdctl.cfg`, `inetrc` | `0700`; fichiers `0600` |
-| `certs` | certificat et clé combinés `xmpp.pem` | `0700`; fichier exigé `0400` ou `0600` |
 | `data` | SQLite et données Mnesia techniques | `0700` |
 | `log` | journaux et crash dumps Erlang | `0700` |
 | `run` | PID ejabberd | `0700` |
 | `upload` | pièces jointes HTTP Upload | `0700`; fichiers `0600` |
 
-Les configurations existantes ne sont jamais écrasées pendant une mise à
-niveau. Le script ne réaffecte pas `HOME` : DSM fournit l'environnement du
-compte de paquet et Erlang y gère son cookie. Aucun mot de passe, cookie,
-jeton, secret TURN ou clé privée n'est présent dans le dépôt.
+La révision 4 refuse volontairement toute mise à niveau en place et toute
+installation qui retrouve un répertoire de données non vide. Il faut exporter
+séparément les sauvegardes réellement nécessaires, désinstaller l'ancienne
+révision avec ses données, puis effectuer une installation propre. Cette rupture
+empêche qu'un ancien profil, une base de comptes ou des uploads hérités soient
+conservés silencieusement. Aucune procédure de restauration automatique n'est
+fournie dans cette révision.
+
+Le script ne réaffecte pas `HOME` : DSM fournit l'environnement du compte de
+paquet et Erlang y gère son cookie. Aucun mot de passe, cookie, jeton, secret
+TURN ou clé privée n'est présent dans le dépôt.
 
 Le service refuse volontairement de démarrer tant qu'un PEM combiné lisible
 par le compte de paquet n'est pas installé à
-`/var/packages/maerxmppserver/var/certs/xmpp.pem`. Le profil ne crée pas non
-plus le compte `admin@xmpp.maer.fr`; le bootstrap sécurisé de ce compte fera
-l'objet d'une tranche distincte.
+`/usr/local/etc/certificate/maerxmppserver/maerxmppserver_client/xmpp.pem`.
+Le profil ne crée pas automatiquement le compte `admin@xmpp.maer.fr`.
+L'opérateur installe, avec `install-bootstrap-admin-root`, la copie vérifiée de
+`maer-bootstrap-admin` sous `/usr/local/libexec/maerxmppserver/`, puis l'exécute
+interactivement après le premier démarrage. Le mot de passe et sa confirmation
+ne sont placés ni dans argv, ni dans l'environnement, ni dans les journaux. Le
+helper crée exclusivement l'identité autorisée par l'ACL et la transaction
+distante unique vérifie son stockage SCRAM-SHA-256, avec rollback interne si
+la validation échoue. Aucun compte jetable n'est créé en production. Il ne
+faut jamais exécuter comme root la copie située dans un arbre package-owned.
+
+DSM 7 interdit l'intégration `SERVICE_CERT` aux paquets communautaires. Le
+helper audité est donc livré séparément dans `packaging/synology/operator/` et
+ne doit jamais être exécuté comme root depuis le `target` du paquet, lequel est
+modifiable par le compte de service. Avant le premier démarrage, l'opérateur
+vérifie l'asset publié, exécute `install-certificate-sync-root` pour installer
+une copie root-owned `0700` sous `/usr/local/libexec/maerxmppserver/`, puis lance
+`certificate-sync` avec `MAER_CERT_ARCHIVE_ID` fixé à l'identifiant DSM choisi.
+Une tâche DSM root quotidienne exécute uniquement cette copie root-owned. Elle
+sélectionne/refuse expiration, SAN, symlinks et clé discordante, écrit le PEM
+atomiquement en `0640` (`root:sc-maerxmppserver`), et ne redémarre qu'un service déjà actif. Le premier
+sync doit précéder le premier start. À la désinstallation, l'opérateur supprime
+explicitement le libexec et l'arbre certificat root-owned.
 
 ## Profil fonctionnel initial
 
@@ -64,8 +90,25 @@ nécessaires à OMEMO, les abonnements push et l'authentification rapide. Les
 mots de passe nouvellement enregistrés sont stockés uniquement en
 SCRAM-SHA-256 dans SQLite.
 
+HTTP Upload limite chaque fichier à 50 Mio. `mod_http_upload_quota` applique à
+chaque compte un seuil souple de 500 Mio, un seuil dur de 600 Mio et supprime
+quotidiennement les fichiers âgés de plus de 30 jours. Au franchissement du
+seuil dur, les plus anciens fichiers du compte sont retirés jusqu'au seuil
+souple. Ces quotas par compte ne remplacent pas une surveillance globale du
+volume.
+
+Le paquet livre donc la commande read-only
+`/var/packages/maerxmppserver/target/bin/maer-upload-usage-check`. Elle publie
+la taille globale du répertoire Upload et l'occupation du volume, retourne 1 à
+80 % et 2 à 90 %. Il faut l'exécuter périodiquement depuis le Planificateur de
+tâches DSM et relier tout code non nul aux notifications de stockage. Les seuils
+peuvent être ajustés avec `MAER_UPLOAD_FS_WARN_PERCENT` et
+`MAER_UPLOAD_FS_CRITICAL_PERCENT` sans modifier les quotas par compte.
+
 Cette tranche active l'association sécurisée MAER sur la route HTTPS
-`/maer-pairing` du seul listener TLS public 5443. Le module limite les sessions
+`/maer-pairing` du listener TLS local `127.0.0.1:5443`. Le reverse proxy DSM
+publie uniquement les routes protocolaires autorisées sur le port public 443.
+Le module limite les sessions
 par IP et globalement, exige l'approbation d'un compte authentifié du domaine
 canonique, crée sa table Mnesia persistante au démarrage et refuse explicitement
 un schéma incompatible. Elle désactive implicitement ou explicitement les autres
@@ -87,7 +130,10 @@ annoncés aux clients.
   `SOURCE_DATE_EPOCH` à la date publique de cette version ;
 - la source publique MAER au commit immuable
   `444c56576df676b37437c3de490cd904d7bca840`, et les empreintes exactes de
-  son archive GitHub.
+  son archive GitHub ;
+- les deux couches tar du SPK à la date UTC publique du paquet, avec un ordre
+  lexical stable et un en-tête gzip sans horodatage. Deux réassemblages
+  successifs d'un staging inchangé doivent ainsi produire le même SHA-256.
 
 Une nouvelle publication source devra mettre à jour le commit, l'URL d'archive,
 la taille et les trois empreintes ensemble. Une branche ou un tag mobile ne doit
@@ -122,6 +168,19 @@ composants et licences attendus, et refuse les sources, exemples, documentation,
 archives statiques, applications OTP de développement, outils, clés privées,
 chemins de build et dépendances runtime non résolues qui n'ont rien à faire dans
 le runtime livré.
+
+La reproductibilité des fins de ligne se vérifie séparément dans deux clones
+propres synthétiques, l'un avec le profil Git Windows et l'autre avec le profil
+Linux/LF :
+
+```powershell
+pwsh -NoProfile -File packaging/synology/tests/test-clean-checkouts.ps1
+```
+
+Les deux profils exigent des octets LF pour les sources, recettes, licences et
+verrous. Le validateur normalise aussi défensivement les textes avant les
+expressions régulières, sans normaliser les fichiers dont l'empreinte est
+verrouillée.
 
 ## Build isolé et validation de l'artefact
 
@@ -178,14 +237,18 @@ make -C spk/maerxmppserver arch-armada38x-7.1
 ```
 
 Le SPK attendu est alors
-`packages/maerxmppserver_armada38x-7.1_26.07.0-2.spk`, à la racine du checkout
+`packages/maerxmppserver_armada38x-7.1_26.07.0-4.spk`, à la racine du checkout
 `spksrc`.
+
+Une seconde exécution de la même commande réassemble le paquet. Son SHA-256
+doit rester strictement identique ; toute différence signale une entrée de
+build non déterministe et interdit la publication.
 
 Après le build, valider le SPK réel, y compris `INFO`, `conf/privilege` et les
 modes des scripts :
 
 ```powershell
-pwsh -NoProfile -File packaging/synology/tests/validate-source.ps1 -SpkPath /chemin/vers/maerxmppserver_armada38x-7.1_26.07.0-2.spk
+pwsh -NoProfile -File packaging/synology/tests/validate-source.ps1 -SpkPath /chemin/vers/maerxmppserver_armada38x-7.1_26.07.0-4.spk
 ```
 
 Le choix `--disable-year2038` est intentionnel pour ce premier essai 32 bits
@@ -199,6 +262,34 @@ compilation et qu'aucun toolchain DSM 7.2 n'existe pour `armada38x` dans
 `spksrc`. La métadonnée de paquet `OS_MIN_VER = 7.2-72806` est distincte et
 continue d'interdire l'installation sur une version DSM antérieure à celle
 validée pour le RS816.
+
+## Publication réseau
+
+Le paquet ne demande plus l'ouverture DSM de 5443. Sa topologie canonique est
+`Internet:443 → reverse proxy DSM → 127.0.0.1:5443`; les URL host-meta, BOSH,
+WebSocket, upload et pairing ne publient donc aucun port non standard. Le port
+5280 et l'administration restent loopback-only, aucun listener 5269 n'est
+déclaré, l'inscription XEP-0077 publique est absente et l'offre SASL exclut
+`ANONYMOUS`, `CRAM-MD5`, `DIGEST-MD5`, `LOGIN`, `PLAIN`, SCRAM-SHA-1 et les
+variantes non stockées. X-OAUTH2 reste disponible parce qu'il transporte les
+jetons d'association MAER.
+
+Seuls les reverse proxies loopback `127.0.0.0/8` et `::1/128` sont déclarés
+fiables pour `X-Forwarded-For`; la valeur `all` est interdite. La règle DSM doit
+remplacer l'en-tête reçu du client, jamais lui ajouter une valeur. Les ports
+EPMD 4369, distribution Erlang 5211, S2S 5269, administration 5280 et backend
+HTTPS 5443 doivent tous rester inaccessibles depuis Internet.
+
+Les réglages DNS, SRV, pare-feu et reverse proxy à appliquer sont décrits dans
+[`PUBLICATION-PREFLIGHT.md`](PUBLICATION-PREFLIGHT.md). Après installation et
+avant d'autoriser les clients :
+
+```powershell
+pwsh -NoProfile -File packaging/synology/dsm-publication-preflight.ps1 -RetiredDomain 'retired-domain.example'
+```
+
+La valeur `retired-domain.example` est un exemple réservé : elle doit être
+remplacée par le FQDN réellement retiré avant tout verdict de publication.
 
 Les recettes OTP désactivent explicitement `wx`, `debugger`, `observer`, `et` et
 `reltool` avec les options `--without-*` de la configuration OTP. OTP 27 ne

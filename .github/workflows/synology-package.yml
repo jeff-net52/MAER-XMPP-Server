@@ -1,0 +1,44 @@
+name: Synology package source contract
+
+on:
+  push:
+    paths:
+      - .gitattributes
+      - COPYING
+      - maer/config/ejabberd.pairing.yml.example
+      - maer/docs/PAIRING_SERVER.md
+      - src/mod_maer_pairing.erl
+      - packaging/synology/**
+      - .github/workflows/synology-package.yml
+  pull_request:
+    paths:
+      - .gitattributes
+      - COPYING
+      - maer/config/ejabberd.pairing.yml.example
+      - maer/docs/PAIRING_SERVER.md
+      - src/mod_maer_pairing.erl
+      - packaging/synology/**
+      - .github/workflows/synology-package.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  clean-checkouts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      # actions/checkout v4.2.2, pinned to an immutable commit.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Validate source contract
+        shell: pwsh
+        run: ./packaging/synology/tests/validate-source.ps1
+      - name: Validate Windows and Linux checkout profiles
+        shell: pwsh
+        run: ./packaging/synology/tests/test-clean-checkouts.ps1

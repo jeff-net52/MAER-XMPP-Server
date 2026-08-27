@@ -1,0 +1,71 @@
+#!/bin/sh
+# Interactive bootstrap: no password is placed in argv, environment or logs.
+set -eu
+umask 077
+ulimit -c 0
+PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+LC_ALL=C; export LC_ALL
+[ "$(id -u)" -eq 0 ] || { echo 'maer-bootstrap-admin: must run as root' >&2; exit 1; }
+[ -t 0 ] || { echo 'maer-bootstrap-admin: an interactive terminal is required' >&2; exit 1; }
+[ -x /bin/su ] || { echo 'maer-bootstrap-admin: /bin/su is required' >&2; exit 1; }
+TARGET=/var/packages/maerxmppserver/target
+HOME_DIR=/var/packages/maerxmppserver/home
+STATE_DIR=/usr/local/var/lib/maerxmppserver
+LOCK_DIR=$STATE_DIR/bootstrap-admin.lock
+cleanup_lock() { rm -f "$LOCK_DIR/owner"; rmdir "$LOCK_DIR" 2>/dev/null || true; }
+[ -x "$TARGET/bin/erl" ] || { echo 'maer-bootstrap-admin: packaged erl is missing' >&2; exit 1; }
+[ -f "$HOME_DIR/.erlang.cookie" ] || { echo 'maer-bootstrap-admin: package cookie is missing' >&2; exit 1; }
+/bin/su -s /bin/sh sc-maerxmppserver -c "test -r '$HOME_DIR/.erlang.cookie'" || { echo 'maer-bootstrap-admin: cookie is unreadable by the service account' >&2; exit 1; }
+[ ! -e "$STATE_DIR" ] || { [ -d "$STATE_DIR" ] && [ ! -L "$STATE_DIR" ]; } || { echo 'maer-bootstrap-admin: unsafe state directory' >&2; exit 1; }
+mkdir -p "$STATE_DIR"; chown root:root "$STATE_DIR"; chmod 700 "$STATE_DIR"
+mkdir "$LOCK_DIR" 2>/dev/null || { echo 'maer-bootstrap-admin: another bootstrap is running (remove stale root-owned lock only after inspection)' >&2; exit 1; }
+trap cleanup_lock EXIT
+trap 'cleanup_lock; trap - EXIT; exit 129' HUP
+trap 'cleanup_lock; trap - EXIT; exit 130' INT
+trap 'cleanup_lock; trap - EXIT; exit 143' TERM
+printf '%s %s\n' "$$" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >"$LOCK_DIR/owner"
+tty_state=$(stty -g) || { cleanup_lock; echo 'maer-bootstrap-admin: cannot read terminal state' >&2; exit 1; }
+restore_tty() { stty "$tty_state" 2>/dev/null || true; }
+trap 'restore_tty; cleanup_lock' EXIT
+trap 'restore_tty; cleanup_lock; trap - EXIT; exit 129' HUP
+trap 'restore_tty; cleanup_lock; trap - EXIT; exit 130' INT
+trap 'restore_tty; cleanup_lock; trap - EXIT; exit 143' TERM
+printf 'Admin password: '; stty -echo
+IFS= read -r password; stty echo; printf '\n'
+[ "${#password}" -ge 12 ] || { echo 'password must contain at least 12 characters' >&2; exit 1; }
+[ "${#password}" -le 1024 ] || { echo 'password must not exceed 1024 characters' >&2; exit 1; }
+printf 'Confirm admin password: '; stty -echo
+IFS= read -r confirmation; stty echo; printf '\n'
+[ "$password" = "$confirmation" ] || { unset password confirmation; echo 'password confirmation does not match' >&2; exit 1; }
+unset confirmation
+
+ERL_CODE='Strip = fun(S) -> unicode:characters_to_binary(string:trim(S,trailing,"\r\n")) end,
+P = Strip(io:get_line("")),
+N = list_to_atom("maerxmppserver@localhost"),
+pong = net_adm:ping(N),
+R = fun(M,F,A) -> rpc:call(N,M,F,A,15000) end,
+Bootstrap = fun() -> R(mod_maer_pairing,operator_bootstrap_admin,[P]) end,
+Result = Bootstrap(),
+case Result of
+ {ok,created} -> io:format("ADMIN_BOOTSTRAP_SCRAM=PASS~n"), halt();
+ {ok,existing} -> io:format("ADMIN_BOOTSTRAP_SCRAM=RECONCILED~n"), halt();
+ {badrpc,timeout} ->
+  Reconcile = fun Reconcile(0) -> manual_inspection_required;
+   Reconcile(Left) -> case Bootstrap() of
+    {ok,_} -> reconciled;
+    {badrpc,timeout} -> timer:sleep(1000), Reconcile(Left-1);
+    {error,exists} -> password_mismatch;
+    OtherRetry -> {failed,OtherRetry}
+   end end,
+  case Reconcile(5) of
+   reconciled -> io:format("ADMIN_BOOTSTRAP_SCRAM=RECONCILED~n"), halt();
+   password_mismatch -> erlang:error(existing_admin_password_mismatch);
+   {failed,RetryFailure} -> erlang:error({bootstrap_reconciliation_failed,RetryFailure});
+   manual_inspection_required -> erlang:error(registration_timeout_manual_inspection_required)
+  end;
+ Other -> erlang:error({bootstrap_failed,Other})
+end.'
+
+printf '%s\n' "$password" |
+  /bin/su -s /bin/sh sc-maerxmppserver -c "test \"\$(id -u)\" != 0 && test \"\$(id -un)\" = sc-maerxmppserver && exec env -i PATH='/usr/sbin:/usr/bin:/sbin:/bin' HOME='$HOME_DIR' ERL_LIBS='$TARGET/lib' ERL_CRASH_DUMP=/dev/null ERL_EPMD_ADDRESS=127.0.0.1 '$TARGET/bin/erl' -noshell -sname maeroperator_$$ -erl_epmd_port 5211 -start_epmd false -dist_listen false -kernel inet_dist_use_interface '{127,0,0,1}' -eval '$ERL_CODE'"
+unset password

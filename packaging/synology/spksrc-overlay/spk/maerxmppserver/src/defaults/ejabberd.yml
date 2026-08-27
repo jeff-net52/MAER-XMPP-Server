@@ -14,13 +14,52 @@ log_rotate_size: 10485760
 log_rotate_count: 5
 
 certfiles:
-  - /var/packages/maerxmppserver/var/certs/xmpp.pem
+  - /usr/local/etc/certificate/maerxmppserver/maerxmppserver_client/xmpp.pem
 
 auth_method: sql
 auth_stored_password_types:
   - scram_sha256
+disable_sasl_mechanisms:
+  - ANONYMOUS
+  - CRAM-MD5
+  - DIGEST-MD5
+  - LOGIN
+  - PLAIN
+  - SCRAM-SHA-1
+  - SCRAM-SHA-1-PLUS
+  - SCRAM-SHA-512
+  - SCRAM-SHA-512-PLUS
 default_db: sql
 default_ram_db: mnesia
+
+c2s_ciphers:
+  - "HIGH"
+  - "!aNULL"
+  - "!eNULL"
+  - "!3DES"
+  - "!RC4"
+  - "!MD5"
+  - "!PSK"
+  - "!SRP"
+  - "@STRENGTH"
+c2s_protocol_options:
+  - no_sslv3
+  - no_tlsv1
+  - no_tlsv1_1
+  - cipher_server_preference
+  - no_compression
+c2s_tls_compression: false
+
+# Browser WebSocket handshakes must originate from the canonical MAER origin.
+# Native clients that do not send an Origin header remain supported by ejabberd.
+websocket_origin:
+  - https://xmpp.maer.fr
+
+# Only the DSM reverse proxy on loopback may supply X-Forwarded-For.  The proxy
+# must replace, never append to, any client-provided forwarding header.
+trusted_proxies:
+  - 127.0.0.0/8
+  - ::1/128
 
 sql_type: sqlite
 sql_database: /var/packages/maerxmppserver/var/data/ejabberd.sqlite
@@ -45,9 +84,25 @@ listen:
       /admin: ejabberd_web_admin
   -
     port: 5443
-    ip: 0.0.0.0
+    ip: 127.0.0.1
     module: ejabberd_http
     tls: true
+    tls_compression: false
+    ciphers: "HIGH:!aNULL:!eNULL:!3DES:!RC4:!MD5:!PSK:!SRP:@STRENGTH"
+    protocol_options:
+      - no_sslv3
+      - no_tlsv1
+      - no_tlsv1_1
+      - cipher_server_preference
+      - no_compression
+    custom_headers:
+      Access-Control-Allow-Origin: https://xmpp.maer.fr
+      Content-Security-Policy: "default-src 'none'; frame-ancestors 'none'"
+      Referrer-Policy: no-referrer
+      Strict-Transport-Security: "max-age=31536000"
+      Vary: Origin
+      X-Content-Type-Options: nosniff
+      X-Frame-Options: DENY
     request_handlers:
       /maer-pairing: mod_maer_pairing
       /http-bind: mod_bosh
@@ -103,6 +158,10 @@ shaper_rules:
   c2s_shaper:
     none: admin
     normal: all
+  soft_upload_quota:
+    500: all
+  hard_upload_quota:
+    600: all
 
 modules:
   mod_adhoc: {}
@@ -118,11 +177,11 @@ modules:
   mod_disco: {}
   mod_fail2ban: {}
   mod_host_meta:
-    bosh_service_url: https://xmpp.maer.fr:5443/http-bind
-    websocket_url: wss://xmpp.maer.fr:5443/xmpp-websocket
+    bosh_service_url: https://xmpp.maer.fr/http-bind
+    websocket_url: wss://xmpp.maer.fr/xmpp-websocket
   mod_http_upload:
     docroot: /var/packages/maerxmppserver/var/upload
-    put_url: https://xmpp.maer.fr:5443/upload
+    put_url: https://xmpp.maer.fr/upload
     max_size: 52428800
     file_mode: "0600"
     dir_mode: "0700"
@@ -130,6 +189,10 @@ modules:
       Access-Control-Allow-Origin: https://xmpp.maer.fr
       Access-Control-Allow-Methods: GET,HEAD,PUT,OPTIONS
       Access-Control-Allow-Headers: Content-Type
+  mod_http_upload_quota:
+    access_soft_quota: soft_upload_quota
+    access_hard_quota: hard_upload_quota
+    max_days: 30
   mod_last:
     db_type: sql
   mod_maer_pairing: {}

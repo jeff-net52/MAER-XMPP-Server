@@ -3,8 +3,9 @@
 # Modifications Copyright (c) 2026 MAER contributors
 
 SPK_NAME = maerxmppserver
+GROUP = sc-maerxmppserver
 SPK_VERS = 26.07.0
-SPK_REV = 2
+SPK_REV = 4
 SPK_ICON = src/maerxmppserver.png
 
 DEPENDS = cross/maerxmppserver
@@ -25,7 +26,7 @@ override DISTRIBUTOR = MAER
 override DISTRIBUTOR_URL = https://github.com/jeff-net52/MAER-XMPP-Server
 DESCRIPTION = Private XMPP messaging server for MAER Chat.
 DISPLAY_NAME = MAER XMPP Server
-CHANGELOG = "Initial DSM 7 armada38x packaging slice."
+CHANGELOG = "Clean-install-only hardened profile with strict proxy trust, upload quotas, and reproducible archives."
 
 HOMEPAGE = https://github.com/jeff-net52/MAER-XMPP-Server
 HELPURL = https://github.com/jeff-net52/MAER-XMPP-Server/tree/maer/server-v1/packaging/synology
@@ -56,10 +57,19 @@ POST_COPY_TARGET = maerxmppserver_copy_runtime
 
 include ../../mk/spksrc.spk.mk
 
+# spksrc normally preserves build-time mtimes in both package.tgz and the outer
+# SPK tarball.  Pin the archive metadata and gzip header so that rebuilding an
+# unchanged checkout produces the exact same package bytes on every host.
+MAER_SOURCE_DATE_EPOCH = 1785110400
+MAER_REPRODUCIBLE_TAR_OPTIONS = --sort=name --mtime=@$(MAER_SOURCE_DATE_EPOCH) --owner=0 --group=0 --numeric-owner
+$(SPK_FILE_NAME): export TAR_OPTIONS = $(MAER_REPRODUCIBLE_TAR_OPTIONS)
+$(SPK_FILE_NAME): export GZIP = -n
+
 .PHONY: maerxmppserver_copy_runtime
 maerxmppserver_copy_runtime: copy_target
 	install -m 755 -d $(STAGING_DIR)/bin $(STAGING_DIR)/lib
 	install -m 755 $(STAGING_INSTALL_PREFIX)/bin/ejabberdctl $(STAGING_DIR)/bin/ejabberdctl
+	install -m 755 src/upload-usage-check.sh $(STAGING_DIR)/bin/maer-upload-usage-check
 	cp -a $(foreach application,$(SERVER_RUNTIME_APPLICATIONS),$(STAGING_INSTALL_PREFIX)/lib/$(application)-*) $(STAGING_DIR)/lib/
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/ebin/mod_maer_pairing.beam
 
@@ -85,6 +95,7 @@ maerxmppserver_runtime_finalize:
 	install -m 644 $(TC_WORK_DIR)/arm-unknown-linux-gnueabi/share/licenses/gcc/COPYING3 $(STAGING_DIR)/share/maerxmppserver/licenses/GPL-3.0.txt
 	install -m 644 $(TC_WORK_DIR)/arm-unknown-linux-gnueabi/share/licenses/gcc/COPYING.RUNTIME $(STAGING_DIR)/share/maerxmppserver/licenses/GCC-Runtime-Library-Exception.txt
 	install -m 644 src/libatomic-GCC-8.5.0-SOURCE.txt $(STAGING_DIR)/share/maerxmppserver/licenses/
+	idna_notice=$$(find $(WORK_DIR) -path '*/_build/default/lib/idna/NOTICE' -type f -print -quit); test -n "$$idna_notice"; install -m 644 "$$idna_notice" $(STAGING_DIR)/share/maerxmppserver/licenses/idna-7.1.0-NOTICE.txt
 	find $(STAGING_DIR) -type f -name '*.orig' -delete
 	find $(STAGING_DIR) -depth -type d \( -name src -o -name c_src -o -name examples -o -name doc -o -name man -o -name include -o -name proper_ext -o -name emacs \) -exec rm -rf {} +
 	find $(STAGING_DIR) -type f \( -name '*.a' -o -name '*.la' \) -delete
@@ -129,6 +140,7 @@ maerxmppserver_runtime_finalize:
 	$(NATIVE_ERLANG_BIN_DIR)/erl -noshell -noinput -eval 'Root = "$(STAGING_DIR)", Files = lists:sort(filelib:fold_files(Root, ".*[.]beam$$", true, fun(File, Acc) -> [File | Acc] end, [])), case beam_lib:strip_files(Files) of {ok, Results} when length(Results) =:= length(Files) -> io:format("Stripped ~B BEAM files.~n", [length(Results)]); Error -> io:format(standard_error, "BEAM stripping failed: ~p~n", [Error]), erlang:halt(1) end, erlang:halt(0).'
 	find $(STAGING_DIR) -type f -exec sh -c 'for runtime_file; do if patchelf --print-rpath "$$runtime_file" >/dev/null 2>&1; then patchelf --force-rpath --set-rpath "$(RUNTIME_RPATH)" "$$runtime_file"; fi; done' sh {} +
 	test -x $(STAGING_DIR)/bin/ejabberdctl
+	test -x $(STAGING_DIR)/bin/maer-upload-usage-check
 	test -e $(STAGING_DIR)/bin/erl
 	test -f $(STAGING_DIR)/lib/libcrypto.so.3
 	test -f $(STAGING_DIR)/lib/libssl.so.3
@@ -140,6 +152,7 @@ maerxmppserver_runtime_finalize:
 	test -f $(STAGING_DIR)/share/maerxmppserver/licenses/GPL-3.0.txt
 	test -f $(STAGING_DIR)/share/maerxmppserver/licenses/GCC-Runtime-Library-Exception.txt
 	test -f $(STAGING_DIR)/share/maerxmppserver/licenses/libatomic-GCC-8.5.0-SOURCE.txt
+	test -f $(STAGING_DIR)/share/maerxmppserver/licenses/idna-7.1.0-NOTICE.txt
 	test -z "$$(find $(STAGING_DIR) -type f -name '*.orig' -print -quit)"
 	test -z "$$(find $(STAGING_DIR) -type f \( -name '*.a' -o -name '*.la' \) -print -quit)"
 	test -z "$$(find $(STAGING_DIR) -type f \( -name '*.erl' -o -name '*.hrl' -o -name '*.c' -o -name '*.h' -o -name '*.o' -o -name '*.src' \) -print -quit)"

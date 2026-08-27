@@ -7,8 +7,5 @@ desc="XMPP client connections with mandatory STARTTLS"
 port_forward="yes"
 dst.ports="5222/tcp"
 
-[maerxmppserver_https]
-title="MAER XMPP Server - HTTPS"
-desc="BOSH, WebSocket, host metadata and file upload"
-port_forward="yes"
-dst.ports="5443/tcp"
+# HTTPS is deliberately loopback-only on 127.0.0.1:5443. DSM reverse proxy
+# publishes the allowlisted protocol paths on the canonical public port 443.

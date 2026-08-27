@@ -34,6 +34,13 @@ function Assert-Equal {
     }
 }
 
+function Read-TextNormalized {
+    param([string] $Path)
+
+    $text = [System.IO.File]::ReadAllText($Path)
+    return $text.Replace("`r`n", "`n").Replace("`r", "`n")
+}
+
 function Get-MakeValue {
     param([string] $Text, [string] $Name)
     $pattern = '(?m)^' + [regex]::Escape($Name) + '\s*=\s*(.+?)\s*$'
@@ -150,6 +157,14 @@ function Validate-BuiltSpk {
             if ($setupLine) { Assert-True ($setupLine -match '^-rwxr-xr-x\s') 'service-setup mode must be 0755.' }
             if ($privilegeLine) { Assert-True ($privilegeLine -match '^-rw-r--r--\s') 'conf/privilege mode must be 0644.' }
         }
+        $numericOuterListing = @(& tar --numeric-owner -tvf $resolvedPackage)
+        if ($LASTEXITCODE -ne 0) {
+            Add-Failure 'Unable to inspect numeric ownership of the SPK.'
+        }
+        else {
+            $outerOwnershipMismatch = $numericOuterListing | Where-Object { $_ -notmatch '^\S+\s+\d+\s+0\s+0\s+' } | Select-Object -First 1
+            Assert-True (-not $outerOwnershipMismatch) $(if ($outerOwnershipMismatch) { "SPK entry is not owned by numeric 0:0: $outerOwnershipMismatch" } else { 'SPK ownership is not numeric root.' })
+        }
 
         $packageArchive = Join-Path $temporaryRoot 'package.tgz'
         if (Test-Path -LiteralPath $packageArchive -PathType Leaf) {
@@ -162,6 +177,7 @@ function Validate-BuiltSpk {
             foreach ($payloadFile in @(
                 'bin/ejabberdctl',
                 'bin/erl',
+                'bin/maer-upload-usage-check',
                 'lib/libcrypto.so.3',
                 'lib/libssl.so.3',
                 'lib/libsqlite3.so.0.8.6',
@@ -179,7 +195,8 @@ function Validate-BuiltSpk {
                 'share/maerxmppserver/licenses/libyaml-0.2.5.txt',
                 'share/maerxmppserver/licenses/GPL-3.0.txt',
                 'share/maerxmppserver/licenses/GCC-Runtime-Library-Exception.txt',
-                'share/maerxmppserver/licenses/libatomic-GCC-8.5.0-SOURCE.txt'
+                'share/maerxmppserver/licenses/libatomic-GCC-8.5.0-SOURCE.txt',
+                'share/maerxmppserver/licenses/idna-7.1.0-NOTICE.txt'
             )) {
                 Assert-True ($normalizedPayloadListing -contains $payloadFile) "SPK payload is missing $payloadFile"
             }
@@ -212,6 +229,9 @@ function Validate-BuiltSpk {
                 Add-Failure 'Unable to inspect package.tgz modes.'
             }
             else {
+                $uploadMonitorLine = $payloadModeListing | Where-Object { $_ -match '(?:^|\s)(?:\./)?bin/maer-upload-usage-check$' } | Select-Object -First 1
+                Assert-True ([bool]$uploadMonitorLine) 'SPK payload listing has no upload usage monitor.'
+                if ($uploadMonitorLine) { Assert-True ($uploadMonitorLine -match '^-rwxr-xr-x\s') 'Upload usage monitor mode must be 0755.' }
                 foreach ($entry in $payloadModeListing) {
                     if ($entry -notmatch '^(?<mode>\S{10})\s') {
                         continue
@@ -223,6 +243,14 @@ function Validate-BuiltSpk {
                         Assert-True ($mode[8] -ne 'w') "Payload contains a world-writable regular file or directory: $entry"
                     }
                 }
+            }
+            $numericPayloadListing = @(& tar --numeric-owner -tvzf $packageArchive)
+            if ($LASTEXITCODE -ne 0) {
+                Add-Failure 'Unable to inspect numeric ownership of package.tgz.'
+            }
+            else {
+                $payloadOwnershipMismatch = $numericPayloadListing | Where-Object { $_ -notmatch '^\S+\s+\d+\s+0\s+0\s+' } | Select-Object -First 1
+                Assert-True (-not $payloadOwnershipMismatch) $(if ($payloadOwnershipMismatch) { "Payload entry is not owned by numeric 0:0: $payloadOwnershipMismatch" } else { 'Payload ownership is not numeric root.' })
             }
 
             $payloadRoot = Join-Path $temporaryRoot 'payload'
@@ -246,6 +274,16 @@ function Validate-BuiltSpk {
                     '-----BEGIN OPENSSH PRIVATE KEY-----'
                 )
                 Assert-True ($null -eq $markerHit) $(if ($markerHit) { "Payload contains forbidden marker '$($markerHit.Marker)' in '$($markerHit.Path)'." } else { 'Payload contains a forbidden build path, secret, or legacy-domain marker.' })
+
+                $embeddedConfigPath = Join-Path $payloadRoot 'share\maerxmppserver\defaults\ejabberd.yml'
+                $sourceConfigPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\defaults\ejabberd.yml'
+                Assert-True (Test-Path -LiteralPath $embeddedConfigPath -PathType Leaf) 'SPK payload has no embedded default configuration.'
+                if ((Test-Path -LiteralPath $embeddedConfigPath -PathType Leaf) -and
+                    (Test-Path -LiteralPath $sourceConfigPath -PathType Leaf)) {
+                    $embeddedConfigHash = (Get-FileHash -LiteralPath $embeddedConfigPath -Algorithm SHA256).Hash
+                    $sourceConfigHash = (Get-FileHash -LiteralPath $sourceConfigPath -Algorithm SHA256).Hash
+                    Assert-Equal $embeddedConfigHash $sourceConfigHash 'SPK embedded configuration differs from the validated source profile.'
+                }
 
                 $installedApplicationsPath = Join-Path $payloadRoot 'lib\erlang\releases\27\installed_application_versions'
                 Assert-True (Test-Path -LiteralPath $installedApplicationsPath -PathType Leaf) 'OTP installed-application inventory is missing.'
@@ -305,18 +343,33 @@ $requiredFiles = @(
     'spksrc-overlay\cross\maerxmppserver\Makefile',
     'spksrc-overlay\cross\maerxmppserver\digests',
     'spksrc-overlay\cross\maerxmppserver\PLIST.auto',
+    'spksrc-overlay\cross\maerxmppserver\patches\001-pairing-distinct-iq-limit-errors.patch',
+    'spksrc-overlay\cross\maerxmppserver\patches\002-rebar-deterministic-beam.patch',
+    'spksrc-overlay\cross\maerxmppserver\patches\003-operator-bootstrap-admin.patch',
+    'tests\inspect-pairing-beam.escript',
     'spksrc-overlay\spk\maerxmppserver\Makefile',
     'spksrc-overlay\spk\maerxmppserver\src\COPYING',
     'spksrc-overlay\spk\maerxmppserver\src\libatomic-GCC-8.5.0-SOURCE.txt',
     'spksrc-overlay\spk\maerxmppserver\src\maerxmppserver.png',
     'spksrc-overlay\spk\maerxmppserver\src\service-setup.sh',
     'spksrc-overlay\spk\maerxmppserver\src\service-start-stop.sh',
+    'spksrc-overlay\spk\maerxmppserver\src\upload-usage-check.sh',
+    'operator\maer-certificate-sync',
+    'operator\install-certificate-sync-root',
+    'operator\maer-bootstrap-admin',
+    'operator\install-bootstrap-admin-root',
     'spksrc-overlay\spk\maerxmppserver\src\maerxmppserver.sc',
     'spksrc-overlay\spk\maerxmppserver\src\defaults\ejabberd.yml',
     'spksrc-overlay\spk\maerxmppserver\src\defaults\ejabberdctl.cfg',
     'spksrc-overlay\spk\maerxmppserver\src\defaults\inetrc',
+    'PUBLICATION-PREFLIGHT.md',
+    'dsm-publication-preflight.ps1',
     'tests\expected-info.json',
-    'tests\test-service-contract.sh'
+    'tests\test-clean-checkouts.ps1',
+    'tests\test-service-contract.sh',
+    'tests\test-upload-monitor.sh',
+    'tests\test-certificate-sync.sh',
+    'tests\test-bootstrap-admin.sh'
 )
 foreach ($relativeFile in $requiredFiles) {
     Assert-True (Test-Path -LiteralPath (Join-Path $synologyRoot $relativeFile) -PathType Leaf) "Required file is missing: $relativeFile"
@@ -326,7 +379,7 @@ $expected = Get-Content -LiteralPath (Join-Path $testsRoot 'expected-info.json')
 $locks = Get-Content -LiteralPath (Join-Path $synologyRoot 'LOCKS.json') -Raw | ConvertFrom-Json
 
 $spkMakefilePath = Join-Path $overlayRoot 'spk\maerxmppserver\Makefile'
-$spkMakefile = Get-Content -LiteralPath $spkMakefilePath -Raw
+$spkMakefile = Read-TextNormalized $spkMakefilePath
 Assert-Equal (Get-MakeValue $spkMakefile 'SPK_NAME') $expected.package 'SPK package identifier mismatch.'
 Assert-Equal ((Get-MakeValue $spkMakefile 'SPK_VERS') + '-' + (Get-MakeValue $spkMakefile 'SPK_REV')) $expected.version 'SPK version mismatch.'
 Assert-Equal (Get-MakeValue $spkMakefile 'DISPLAY_NAME') $expected.displayname 'SPK display name mismatch.'
@@ -341,6 +394,12 @@ Assert-True ($spkMakefile -match '(?m)^\s*chmod 755 \$\(STAGING_DIR\)/bin/ejabbe
 Assert-Equal (Get-MakeValue $spkMakefile 'POST_STRIP_TARGET') 'maerxmppserver_runtime_finalize' 'Runtime hardening must run after the standard strip phase.'
 Assert-Equal (Get-MakeValue $spkMakefile 'POST_SERVICE_TARGET') 'maerxmppserver_service_finalize' 'DSM service script modes must be finalized before outer packaging.'
 Assert-Equal (Get-MakeValue $spkMakefile 'RUNTIME_RPATH') '/var/packages/maerxmppserver/target/lib' 'Runtime RPATH must use only the canonical package library path.'
+Assert-Equal (Get-MakeValue $spkMakefile 'MAER_SOURCE_DATE_EPOCH') '1785110400' 'SPK archive timestamp must be pinned to the package release date.'
+Assert-Equal (Get-MakeValue $spkMakefile 'MAER_REPRODUCIBLE_TAR_OPTIONS') '--sort=name --mtime=@$(MAER_SOURCE_DATE_EPOCH) --owner=0 --group=0 --numeric-owner' 'SPK archives must use stable ordering, mtimes, and numeric ownership.'
+Assert-True ($spkMakefile -match '(?m)^\$\(SPK_FILE_NAME\): export TAR_OPTIONS = \$\(MAER_REPRODUCIBLE_TAR_OPTIONS\)$') 'Reproducible tar options must be scoped to both SPK archive layers.'
+Assert-True ($spkMakefile -match '(?m)^\$\(SPK_FILE_NAME\): export GZIP = -n$') 'The package.tgz gzip header must omit build-time metadata.'
+Assert-True ($spkMakefile -match '(?m)^\s*install -m 755 src/upload-usage-check\.sh \$\(STAGING_DIR\)/bin/maer-upload-usage-check$') 'Global upload usage monitor must be installed as an executable.'
+Assert-Equal (Get-MakeValue $spkMakefile 'GROUP') 'sc-maerxmppserver' 'Package must use its isolated service group.'
 Assert-True ($spkMakefile -match 'beam_lib:strip_files\(Files\)') 'Runtime finalization must strip reproducibility metadata from every BEAM file.'
 Assert-True ($spkMakefile -match 'patchelf --force-rpath --set-rpath "\$\(RUNTIME_RPATH\)"') 'Runtime finalization must canonicalize every dynamic ELF RPATH.'
 Assert-Equal (Get-MakeValue $spkMakefile 'OTP_DEVELOPMENT_APPLICATIONS') 'common_test dialyzer edoc erl_interface eunit' 'Runtime pruning must remove the deterministic OTP development-application allowlist.'
@@ -351,6 +410,7 @@ Assert-True ($spkMakefile -match [regex]::Escape('-----BEGIN ([A-Z0-9]+ )*PRIVAT
 Assert-True ($spkMakefile -match 'share/maerxmppserver/licenses') 'Runtime finalization must install third-party license notices.'
 Assert-True ($spkMakefile -match [regex]::Escape('share/licenses/gcc/COPYING3')) 'Runtime finalization must install the GPLv3 text for libatomic.'
 Assert-True ($spkMakefile -match [regex]::Escape('libatomic-GCC-8.5.0-SOURCE.txt')) 'Runtime finalization must install the libatomic source notice.'
+Assert-True ($spkMakefile -match [regex]::Escape('idna-7.1.0-NOTICE.txt')) 'Runtime finalization must install the idna Apache attribution notice.'
 Assert-True ($spkMakefile -match "sed -i -E '/\^\(common_test\|dialyzer\|edoc\|erl_interface\|eunit\)-/d'") 'Runtime finalization must remove pruned applications from the OTP inventory.'
 Assert-True ($spkMakefile -match [regex]::Escape('$(STAGING_DIR)/lib/erlang/Install')) 'Runtime finalization must remove the stale OTP installer.'
 Assert-True ($spkMakefile -match [regex]::Escape('$(STAGING_DIR)/lib/erlang/bin/start')) 'Runtime finalization must remove stale embedded launchers.'
@@ -363,7 +423,7 @@ Assert-True (-not ($spkMakefile -match '(?m)^\s*(SPK_COMMANDS|INSTALL_REPLACE_PA
 Assert-True (-not (Test-Path -LiteralPath (Join-Path $overlayRoot 'spk\maerxmppserver\src\conf\privilege'))) 'A manual privilege file would race with the DSM 7 generator.'
 Assert-Equal ('sc-' + $expected.package) $expected.username 'Expected DSM username is inconsistent.'
 Assert-Equal $expected.run_as 'package' 'Expected DSM run-as must be package.'
-Assert-Equal $expected.groupname 'synocommunity' 'Expected DSM group must match spksrc DSM 7 defaults.'
+Assert-Equal $expected.groupname 'sc-maerxmppserver' 'Expected DSM group must remain isolated to this service.'
 
 Assert-Equal $locks.package.name $expected.package 'LOCKS package name mismatch.'
 Assert-Equal $locks.package.display_name $expected.displayname 'LOCKS display name mismatch.'
@@ -379,14 +439,16 @@ Assert-Equal $locks.maer_xmpp_server.archive 'https://github.com/jeff-net52/MAER
 Assert-Equal $locks.maer_xmpp_server.bytes 3113176 'MAER public source archive size mismatch.'
 Assert-True (-not ($locks.maer_xmpp_server.PSObject.Properties.Name -contains 'tag')) 'MAER source lock must not depend on a tag.'
 
-$nativeOtpMakefile = Get-Content -LiteralPath (Join-Path $overlayRoot 'native\erlang-maer\Makefile') -Raw
-$crossOtpMakefile = Get-Content -LiteralPath (Join-Path $overlayRoot 'cross\erlang-maer\Makefile') -Raw
-$crossOtpNcursesPatch = Get-Content -LiteralPath (Join-Path $overlayRoot 'cross\erlang-maer\patches\000-configure-add-ncursesw-to-termcap-libraries.patch') -Raw
-$crossOtpOpenSslPatch = Get-Content -LiteralPath (Join-Path $overlayRoot 'cross\erlang-maer\patches\001-fix-openssl-include-order.patch') -Raw
-$crossOtpBuildFlagsPatch = Get-Content -LiteralPath (Join-Path $overlayRoot 'cross\erlang-maer\patches\002-sanitize-erts-build-flags.patch') -Raw
-$opensslMakefile = Get-Content -LiteralPath (Join-Path $overlayRoot 'cross\openssl3-maer\Makefile') -Raw
-$opensslBuildInfoPatch = Get-Content -LiteralPath (Join-Path $overlayRoot 'cross\openssl3-maer\patches\001-sanitize-build-information.patch') -Raw
-$serverMakefile = Get-Content -LiteralPath (Join-Path $overlayRoot 'cross\maerxmppserver\Makefile') -Raw
+$nativeOtpMakefile = Read-TextNormalized (Join-Path $overlayRoot 'native\erlang-maer\Makefile')
+$crossOtpMakefile = Read-TextNormalized (Join-Path $overlayRoot 'cross\erlang-maer\Makefile')
+$crossOtpNcursesPatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\erlang-maer\patches\000-configure-add-ncursesw-to-termcap-libraries.patch')
+$crossOtpOpenSslPatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\erlang-maer\patches\001-fix-openssl-include-order.patch')
+$crossOtpBuildFlagsPatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\erlang-maer\patches\002-sanitize-erts-build-flags.patch')
+$opensslMakefile = Read-TextNormalized (Join-Path $overlayRoot 'cross\openssl3-maer\Makefile')
+$opensslBuildInfoPatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\openssl3-maer\patches\001-sanitize-build-information.patch')
+$serverMakefile = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\Makefile')
+$pairingLimitPatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\patches\001-pairing-distinct-iq-limit-errors.patch')
+$rebarDeterministicPatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\patches\002-rebar-deterministic-beam.patch')
 Assert-Equal (Get-MakeValue $nativeOtpMakefile 'PKG_VERS') $locks.erlang_otp.version 'Native OTP version mismatch.'
 Assert-Equal (Get-MakeValue $crossOtpMakefile 'PKG_VERS') $locks.erlang_otp.version 'Cross OTP version mismatch.'
 Assert-Equal (Get-MakeValue $serverMakefile 'PKG_COMMIT') $locks.maer_xmpp_server.commit 'MAER source commit mismatch.'
@@ -397,8 +459,13 @@ Assert-Equal (Get-MakeValue $serverMakefile 'PKG_DIR') 'MAER-XMPP-Server-$(PKG_C
 Assert-True (-not ($serverMakefile -match '(?m)^PKG_TAG\s*=')) 'MAER build must not depend on a tag.'
 Assert-True ($crossOtpMakefile -match '(?m)^CONFIGURE_ARGS \+= --disable-year2038$') 'ARMv7 OTP recipe must explicitly declare the time32 compatibility choice.'
 Assert-True ($nativeOtpMakefile -match '(?m)^CONFIGURE_ARGS \+= --disable-pgo$') 'Native OTP build tools must disable profile-guided optimization.'
+Assert-True ($nativeOtpMakefile -match '(?m)^CONFIGURE_ARGS \+= --enable-deterministic-build$') 'Native OTP must use its official deterministic-build mode.'
+Assert-True ($crossOtpMakefile -match '(?m)^CONFIGURE_ARGS \+= --enable-deterministic-build$') 'Cross OTP must use its official deterministic-build mode.'
 Assert-Equal (Get-MakeValue $crossOtpMakefile 'NATIVE_ERLANG_BIN_DIR') '$(abspath $(WORK_DIR)/../../../native/erlang-maer/work-native/install/usr/local/bin)' 'Cross OTP native Erlang path must not depend on prior filesystem existence.'
 Assert-Equal (Get-MakeValue $crossOtpMakefile 'ENV') 'PATH=$(NATIVE_ERLANG_BIN_DIR):$$PATH' 'Pinned native OTP must take precedence over the system Erlang runtime.'
+Assert-True (-not ($serverMakefile.Contains('ERL_COMPILER_OPTIONS'))) 'Deterministic compiler options must not leak from spksrc into OTP dependency builds.'
+Assert-True ($rebarDeterministicPatch.Contains('{erl_opts, [deterministic,')) 'Root ejabberd rebar options must enable deterministic BEAM output.'
+Assert-True ($rebarDeterministicPatch.Contains('{add, [{erl_opts, [deterministic]}]}')) 'All locked rebar dependencies must enable deterministic BEAM output.'
 Assert-True ($crossOtpNcursesPatch -match 'termcap_libs="tinfo ncursesw ncurses curses termcap termlib"') 'Cross OTP must probe the ncursesw library that spksrc actually stages.'
 Assert-True ($crossOtpOpenSslPatch -match 'CFLAGS = -Iopenssl/include @LIB_CFLAGS@') 'Cross OTP erl_interface must prefer its staged OpenSSL 3 headers.'
 Assert-True ($crossOtpOpenSslPatch -match 'TYPE_FLAGS = -Iopenssl/include @CFLAGS@') 'Cross OTP must prefer its staged OpenSSL 3 headers.'
@@ -410,6 +477,13 @@ Assert-True ($crossOtpBuildFlagsPatch -match [regex]::Escape('-v CFLAGS "MAER re
 Assert-True ($crossOtpBuildFlagsPatch -match [regex]::Escape('-v LDFLAGS "/var/packages/maerxmppserver/target/lib"')) 'OTP emulator metadata must contain only the canonical runtime library path.'
 Assert-True ($opensslBuildInfoPatch -match [regex]::Escape('mkbuildinf.pl "MAER reproducible ARMv7 runtime"')) 'OpenSSL build metadata must be sanitized at compile time.'
 Assert-True (-not ($serverMakefile -match 'sed -i\.orig')) 'Server recipe must not create .orig files.'
+Assert-True ($pairingLimitPatch -match '(?m)^--- src/mod_maer_pairing\.erl$') 'Pairing patch old path must be directly applicable with spksrc patch -p0.'
+Assert-True ($pairingLimitPatch -match '(?m)^\+\+\+ src/mod_maer_pairing\.erl$') 'Pairing patch new path must be directly applicable with spksrc patch -p0.'
+Assert-True (-not ($pairingLimitPatch -match '(?m)^(---|\+\+\+) [ab]/')) 'Packaged patches applied with -p0 must not contain git a/ or b/ path prefixes.'
+Assert-True ($pairingLimitPatch.Contains('xmpp:err_policy_violation()')) 'Packaged pairing throttling must use policy-violation.'
+Assert-True ($pairingLimitPatch.Contains('xmpp:err_resource_constraint()')) 'Packaged device cap must retain resource-constraint.'
+Assert-True ($pairingLimitPatch.Contains('iq_rate_limit_condition_test()')) 'Packaged pairing patch must test the throttling stanza condition.'
+Assert-True ($pairingLimitPatch.Contains('iq_device_limit_condition_test()')) 'Packaged pairing patch must test the device-cap stanza condition.'
 foreach ($otpMakefile in @($nativeOtpMakefile, $crossOtpMakefile)) {
     foreach ($guiApplication in @('wx', 'debugger', 'et', 'observer', 'reltool')) {
         Assert-True ($otpMakefile -match "(?m)^CONFIGURE_ARGS \+= --without-$guiApplication$") "OTP recipe must explicitly disable $guiApplication."
@@ -424,18 +498,18 @@ $otpDigestFiles = @(
     (Join-Path $overlayRoot 'cross\erlang-maer\digests')
 )
 foreach ($digestPath in $otpDigestFiles) {
-    $digestText = Get-Content -LiteralPath $digestPath -Raw
+    $digestText = Read-TextNormalized $digestPath
     Assert-True ($digestText -match [regex]::Escape("SHA256 $($locks.erlang_otp.sha256)")) "OTP SHA256 missing from $digestPath"
     Assert-True ($digestText -match [regex]::Escape("SHA1 $($locks.erlang_otp.sha1)")) "OTP SHA1 missing from $digestPath"
     Assert-True ($digestText -match [regex]::Escape("MD5 $($locks.erlang_otp.md5)")) "OTP MD5 missing from $digestPath"
 }
-$serverDigestText = Get-Content -LiteralPath (Join-Path $overlayRoot 'cross\maerxmppserver\digests') -Raw
+$serverDigestText = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\digests')
 $serverDigestName = "maer-xmpp-server-$($locks.maer_xmpp_server.commit).tar.gz"
 Assert-True ($serverDigestText -match ('(?m)^' + [regex]::Escape($serverDigestName) + '\s+SHA256\s+')) 'MAER digest filename does not derive from the locked commit.'
 Assert-True ($serverDigestText -match [regex]::Escape("SHA256 $($locks.maer_xmpp_server.sha256)")) 'MAER source SHA256 missing from digests.'
 Assert-True ($serverDigestText -match [regex]::Escape("SHA1 $($locks.maer_xmpp_server.sha1)")) 'MAER source SHA1 missing from digests.'
 Assert-True ($serverDigestText -match [regex]::Escape("MD5 $($locks.maer_xmpp_server.md5)")) 'MAER source MD5 missing from digests.'
-$opensslDigestText = Get-Content -LiteralPath (Join-Path $overlayRoot 'cross\openssl3-maer\digests') -Raw
+$opensslDigestText = Read-TextNormalized (Join-Path $overlayRoot 'cross\openssl3-maer\digests')
 Assert-True ($opensslDigestText -match [regex]::Escape("SHA256 $($locks.openssl.sha256)")) 'OpenSSL source SHA256 missing from digests.'
 Assert-True ($opensslDigestText -match [regex]::Escape("SHA1 $($locks.openssl.sha1)")) 'OpenSSL source SHA1 missing from digests.'
 Assert-True ($opensslDigestText -match [regex]::Escape("MD5 $($locks.openssl.md5)")) 'OpenSSL source MD5 missing from digests.'
@@ -467,14 +541,14 @@ if (Test-Path -LiteralPath $libatomicSourceNoticePath -PathType Leaf) {
     Assert-True ($libatomicSourceNotice.Contains('armada38x-gcc850_glibc226_hard-GPL.txz')) 'libatomic source notice has no exact Synology binary provenance.'
 }
 
-$prepareScript = Get-Content -LiteralPath (Join-Path $synologyRoot 'prepare-overlay.ps1') -Raw
+$prepareScript = Read-TextNormalized (Join-Path $synologyRoot 'prepare-overlay.ps1')
 Assert-True ($prepareScript.Contains($locks.spksrc.commit)) 'Overlay preparation does not enforce the locked spksrc commit.'
 Assert-True ($prepareScript -match 'status --porcelain') 'Overlay preparation must reject a dirty spksrc checkout.'
 Assert-True ($prepareScript -match 'Refusing to overwrite') 'Overlay preparation must refuse existing target recipes.'
 Assert-True ($prepareScript -match [regex]::Escape("'cross\openssl3-maer'")) 'PowerShell overlay preparation must install the reproducible OpenSSL recipe.'
 
 $prepareShellPath = Join-Path $synologyRoot 'prepare-overlay.sh'
-$prepareShellScript = Get-Content -LiteralPath $prepareShellPath -Raw
+$prepareShellScript = Read-TextNormalized $prepareShellPath
 Assert-True ($prepareShellScript.StartsWith("#!/usr/bin/env bash`n")) 'WSL overlay preparation must use Bash with LF endings.'
 Assert-True ($prepareShellScript -match '(?m)^set -Eeuo pipefail$') 'WSL overlay preparation must enable strict Bash behavior.'
 Assert-True ($prepareShellScript.Contains($locks.spksrc.commit)) 'WSL overlay preparation does not enforce the locked spksrc commit.'
@@ -502,14 +576,39 @@ $configPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\defaults\ejabberd.y
 $controlConfigPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\defaults\ejabberdctl.cfg'
 $serviceSetupPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\service-setup.sh'
 $serviceScriptPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\service-start-stop.sh'
-$configText = Get-Content -LiteralPath $configPath -Raw
-$controlConfigText = Get-Content -LiteralPath $controlConfigPath -Raw
-$serviceSetupText = Get-Content -LiteralPath $serviceSetupPath -Raw
-$serviceScriptText = Get-Content -LiteralPath $serviceScriptPath -Raw
+$uploadMonitorPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\upload-usage-check.sh'
+$certificateSyncPath = Join-Path $synologyRoot 'operator\maer-certificate-sync'
+$certificateInstallerPath = Join-Path $synologyRoot 'operator\install-certificate-sync-root'
+$bootstrapAdminPath = Join-Path $synologyRoot 'operator\maer-bootstrap-admin'
+$bootstrapInstallerPath = Join-Path $synologyRoot 'operator\install-bootstrap-admin-root'
+$firewallPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\maerxmppserver.sc'
+$attributesPath = Join-Path $repositoryRoot '.gitattributes'
+$publicationGuidePath = Join-Path $synologyRoot 'PUBLICATION-PREFLIGHT.md'
+$publicationPreflightPath = Join-Path $synologyRoot 'dsm-publication-preflight.ps1'
+$workflowPath = Join-Path $repositoryRoot '.github\workflows\synology-package.yml'
+$configText = Read-TextNormalized $configPath
+$controlConfigText = Read-TextNormalized $controlConfigPath
+$serviceSetupText = Read-TextNormalized $serviceSetupPath
+$serviceScriptText = Read-TextNormalized $serviceScriptPath
+$uploadMonitorText = Read-TextNormalized $uploadMonitorPath
+$firewallText = Read-TextNormalized $firewallPath
+$attributesText = Read-TextNormalized $attributesPath
+$publicationGuideText = Read-TextNormalized $publicationGuidePath
+$publicationPreflightText = Read-TextNormalized $publicationPreflightPath
+$workflowText = Read-TextNormalized $workflowPath
 
-Assert-True ($configText -match '(?m)^hosts:\s*\r?\n\s+- xmpp\.maer\.fr$') 'Canonical XMPP host is missing.'
+Assert-True ($configText -match '(?m)^hosts:\s*\n\s+- xmpp\.maer\.fr$') 'Canonical XMPP host is missing.'
 Assert-True ($configText -match '(?m)^\s+starttls_required: true$') 'Client TCP listener must require STARTTLS.'
-Assert-True ($configText -match '(?m)^auth_stored_password_types:\s*\r?\n\s+- scram_sha256$') 'Profile must store only SCRAM-SHA-256 credentials.'
+Assert-True ($configText -match '(?m)^auth_stored_password_types:\s*\n\s+- scram_sha256$') 'Profile must store only SCRAM-SHA-256 credentials.'
+Assert-Equal ([regex]::Matches($configText, '(?m)^  "webadmin commands":$').Count) 1 'Web-admin command ACL must be declared exactly once.'
+foreach ($disabledMechanism in @('ANONYMOUS', 'CRAM-MD5', 'DIGEST-MD5', 'LOGIN', 'PLAIN', 'SCRAM-SHA-1', 'SCRAM-SHA-1-PLUS', 'SCRAM-SHA-512', 'SCRAM-SHA-512-PLUS')) {
+    Assert-True ($configText -match "(?m)^  - $([regex]::Escape($disabledMechanism))$") "Legacy or unsupported SASL mechanism must be disabled: $disabledMechanism"
+}
+Assert-True (-not ($configText -match '(?m)^  - X-OAUTH2$')) 'X-OAUTH2 must remain available for MAER pairing tokens.'
+foreach ($protocolOption in @('no_sslv3', 'no_tlsv1', 'no_tlsv1_1', 'cipher_server_preference', 'no_compression')) {
+    Assert-True ($configText -match "(?m)^      - $([regex]::Escape($protocolOption))$" -or
+        $configText -match "(?m)^  - $([regex]::Escape($protocolOption))$") "TLS protocol option is missing: $protocolOption"
+}
 Assert-True ($configText -match '(?m)^sql_type: sqlite$') 'Profile must use SQLite.'
 Assert-True ($configText -match '(?m)^\s+mod_mam:$') 'MAM module is missing.'
 Assert-True ($configText -match '(?m)^\s+mod_muc:$') 'MUC module is missing.'
@@ -520,13 +619,48 @@ Assert-True ($configText -match '(?m)^\s+mod_push:$') 'Push module is missing.'
 Assert-True (-not ($configText -match '(?m)^\s+mod_register:')) 'Public in-band registration must remain disabled.'
 Assert-True (-not ($configText -match '(?m)^\s+mod_http_api:')) 'HTTP administration API must remain disabled.'
 Assert-True (-not ($configText -match '(?m)^\s+mod_stun_disco:')) 'TURN discovery must remain disabled until secret provisioning exists.'
-Assert-True ($configText.Contains('/var/packages/maerxmppserver/var/certs/xmpp.pem')) 'Canonical certificate path is missing.'
+Assert-True ($configText -match '(?ms)^\s+port: 5280\n\s+ip: 127\.0\.0\.1\n\s+module: ejabberd_http\n\s+request_handlers:\n\s+/admin: ejabberd_web_admin$') 'Administration listener must remain loopback-only.'
+Assert-True ($configText -match '(?ms)^\s+port: 5443\n\s+ip: 127\.0\.0\.1\n\s+module: ejabberd_http\n\s+tls: true$') 'HTTPS protocol backend must remain TLS and loopback-only.'
+Assert-True ($configText -match '(?m)^\s+ciphers: "HIGH:!aNULL:!eNULL:!3DES:!RC4:!MD5:!PSK:!SRP:@STRENGTH"$') 'HTTPS protocol backend must use the hardened cipher profile.'
+Assert-True ($configText -match '(?m)^\s+tls_compression: false$') 'HTTPS protocol backend must disable TLS compression.'
+Assert-True (-not ($configText -match '(?m)^\s+port: 5269$')) 'Private MAER profile must not listen on the S2S port 5269.'
+Assert-True ($configText -match '(?ms)^\s+s2s:\n\s+deny: all$') 'Private MAER profile must deny all S2S routing.'
+Assert-True ($configText.Contains('bosh_service_url: https://xmpp.maer.fr/http-bind')) 'Host-meta BOSH URL must use canonical public HTTPS 443.'
+Assert-True ($configText.Contains('websocket_url: wss://xmpp.maer.fr/xmpp-websocket')) 'Host-meta WebSocket URL must use canonical public HTTPS 443.'
+Assert-True ($configText.Contains('put_url: https://xmpp.maer.fr/upload')) 'HTTP Upload URL must use canonical public HTTPS 443.'
+Assert-True (-not ($configText.Contains('xmpp.maer.fr:5443'))) 'Public protocol URLs must never expose the loopback backend port 5443.'
+foreach ($header in @('Access-Control-Allow-Origin', 'Content-Security-Policy', 'Referrer-Policy', 'Strict-Transport-Security', 'X-Content-Type-Options', 'X-Frame-Options')) {
+    Assert-True ($configText -match "(?m)^      $([regex]::Escape($header)):") "HTTPS listener security header is missing: $header"
+}
+Assert-True ($configText.Contains('Access-Control-Allow-Origin: https://xmpp.maer.fr')) 'CORS origin must be restricted to the canonical MAER origin.'
+Assert-True ($configText -match '(?m)^websocket_origin:\n  - https://xmpp\.maer\.fr$') 'WebSocket browser origins must be restricted to the canonical MAER origin.'
+Assert-True ($configText -match '(?m)^trusted_proxies:\n  - 127\.0\.0\.0/8\n  - ::1/128$') 'Only IPv4 and IPv6 loopback proxies may be trusted globally.'
+Assert-True (-not ($configText -match '(?m)^trusted_proxies:\s*all$|(?ms)^trusted_proxies:\s*\n\s+- all\s*$')) 'trusted_proxies must never accept all sources.'
+Assert-True ($configText -match '(?ms)^  soft_upload_quota:\n    500: all\n  hard_upload_quota:\n    600: all$') 'HTTP Upload soft/hard quotas must be exactly 500/600 MiB.'
+Assert-True ($configText -match '(?ms)^  mod_http_upload_quota:\n    access_soft_quota: soft_upload_quota\n    access_hard_quota: hard_upload_quota\n    max_days: 30$') 'HTTP Upload quota module must enforce the declared rules and 30-day retention.'
+Assert-True ($configText.Contains('/usr/local/etc/certificate/maerxmppserver/maerxmppserver_client/xmpp.pem')) 'Canonical root-managed certificate path is missing.'
 Assert-True ($configText.Contains('/var/packages/maerxmppserver/var/data/ejabberd.sqlite')) 'Canonical SQLite path is missing.'
+Assert-True ($firewallText -match '(?m)^dst\.ports="5222/tcp"$') 'DSM firewall profile must publish XMPP client port 5222.'
+Assert-True (-not ($firewallText -match '(?m)^dst\.ports="[^"]*(?:5269|5280|5443)')) 'DSM firewall profile must not publish S2S, administration, or HTTPS backend ports.'
+Assert-True ($attributesText -match '(?m)^\* text=auto eol=lf$') 'Git must default detected text files to LF.'
+Assert-True ($attributesText -match '(?m)^COPYING text eol=lf$') 'Canonical COPYING must have an explicit LF contract.'
+Assert-True ($publicationGuideText.Contains('xmpp.maer.fr:443')) 'DSM publication guide must document the public 443 topology.'
+Assert-True ($publicationGuideText.Contains('127.0.0.1:5443')) 'DSM publication guide must document the loopback HTTPS backend.'
+Assert-True ($publicationGuideText.Contains('_xmpp-client._tcp.xmpp.maer.fr')) 'DSM publication guide must document the client SRV record.'
+Assert-True ($publicationPreflightText.Contains('"_xmpp-client._tcp.$Domain"')) 'DSM preflight must verify the client SRV record.'
+Assert-True ($publicationPreflightText -match 'privatePort in @\(4369, 5211, 5269, 5280, 5443\)') 'DSM preflight must verify all private Erlang, S2S, admin, and backend ports remain closed.'
+Assert-True ($publicationPreflightText.Contains("@('/admin/', '/api')")) 'DSM preflight must prove the administration and API routes are absent.'
+Assert-True ($publicationPreflightText.Contains('Test-XmppStartTls')) 'DSM preflight must verify XMPP STARTTLS and SASL at runtime.'
+Assert-True ($publicationPreflightText.Contains('Test-ObsoleteTlsRejection')) 'DSM preflight must reject TLS 1.0 and TLS 1.1 explicitly.'
+Assert-True ($publicationPreflightText.Contains('$RetiredDomain')) 'DSM preflight must verify the retired domain supplied by the operator.'
+Assert-True ($publicationPreflightText.Contains('https://untrusted.invalid')) 'DSM preflight must reject a hostile WebSocket origin.'
+Assert-True ($workflowText -match 'uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683') 'GitHub checkout action must be pinned to the immutable v4.2.2 commit.'
+Assert-Equal ([regex]::Matches($workflowText, '(?m)^\s+- src/mod_maer_pairing\.erl$').Count) 2 'Pairing source changes must trigger both push and pull-request package validation.'
 Assert-True ($controlConfigText -match '(?m)^ERL_DIST_PORT=5211$') 'Fixed Erlang distribution port is missing.'
 Assert-True ($controlConfigText -match '(?m)^INET_DIST_INTERFACE=127\.0\.0\.1$') 'Erlang distribution must bind to loopback.'
 
-$runtimeFiles = @($configPath, $controlConfigPath, $serviceSetupPath, $serviceScriptPath)
-$runtimePayload = ($runtimeFiles | ForEach-Object { Get-Content -LiteralPath $_ -Raw }) -join "`n"
+$runtimeFiles = @($configPath, $controlConfigPath, $serviceSetupPath, $serviceScriptPath, $uploadMonitorPath)
+$runtimePayload = ($runtimeFiles | ForEach-Object { Read-TextNormalized $_ }) -join "`n"
 $forbiddenMarkers = '(?i)CHANGE[_-]?ME|TODO|@@[^@]+@@|\{\{[^}]+\}\}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'
 Assert-True (-not ($runtimePayload -match $forbiddenMarkers)) 'Runtime payload contains a placeholder or private key marker.'
 Assert-True (-not ($runtimePayload -match '(?im)^\s*(password|secret|external_secret)\s*:')) 'Runtime profile contains a secret-bearing YAML key.'
@@ -536,15 +670,52 @@ Assert-True ($serviceScriptText -match 'for service_port in 5211 5222 5280 5443'
 Assert-True ($serviceScriptText -match 'cannot inspect TCP listeners; refusing to start') 'Port inspection must fail closed.'
 Assert-True ($serviceScriptText -match '^check_config\(\)' -or $serviceScriptText -match '(?m)^check_config\(\)$') 'Configuration check function is missing.'
 Assert-True ($serviceScriptText -match 'ejabberd_config:load\(\)') 'Configuration check must parse the real ejabberd profile.'
-Assert-True ($serviceScriptText -match 'TLS certificate permissions must be 0400 or 0600') 'TLS key permission gate is missing.'
+Assert-True ($serviceScriptText -match 'TLS certificate permissions must be 0640') 'TLS key permission gate must require exactly 0640.'
+Assert-True ($serviceScriptText -match 'MAER_CERTIFICATE_OWNER:-root:sc-maerxmppserver') 'TLS key ownership gate must require root and the isolated service group.'
 Assert-True (-not ($serviceScriptText -match 'kill\s+-9|rm\s+-r[fF]|(?m)^\s*(synopkg|sudo)\b')) 'Service script contains a destructive or privileged fallback.'
 Assert-True ($serviceScriptText -match 'kill -0') 'Service status must verify the PID without signaling it.'
 Assert-True ($serviceSetupText -match 'chmod 700') 'Runtime directories are not restricted to mode 0700.'
 Assert-True ($serviceSetupText -match 'chmod 600') 'Runtime configuration files are not restricted to mode 0600.'
+Assert-True ($serviceSetupText -match '(?m)^validate_preupgrade\(\)$') 'Clean-install-only package must define an upgrade validation hook.'
+Assert-True ($serviceSetupText -match 'In-place upgrades.*intentionally refused') 'Upgrade refusal must be explicit.'
+Assert-True ($serviceSetupText -match 'requires an empty package data directory') 'Clean install must reject retained package state.'
+Assert-True (-not ($serviceSetupText -match '(?ms)^service_postupgrade\(\).*?install_runtime_defaults')) 'Upgrade hook must never preserve an older runtime profile.'
 Assert-True (-not ($serviceSetupText -match '(?m)^\s*(rm|mv)\s')) 'Installer setup must not remove or replace existing state.'
 Assert-True (-not ($serviceSetupText -match '(?m)^\s*(export\s+)?HOME=')) 'Service setup must leave HOME under DSM control.'
 
-foreach ($shellPath in @($serviceSetupPath, $serviceScriptPath, $prepareShellPath, (Join-Path $testsRoot 'test-service-contract.sh'))) {
+Assert-True ($uploadMonitorText -match 'MAER_UPLOAD_FS_WARN_PERCENT:-80') 'Global upload monitor warning threshold must default to 80 percent.'
+Assert-True ($uploadMonitorText -match 'MAER_UPLOAD_FS_CRITICAL_PERCENT:-90') 'Global upload monitor critical threshold must default to 90 percent.'
+Assert-True (-not ($uploadMonitorText -match '(?m)^\s*(rm|mv)\s')) 'Global upload monitor must remain read-only.'
+$certificateSyncText = Read-TextNormalized $certificateSyncPath
+Assert-True ($certificateSyncText.Contains('-checkend 604800')) 'Certificate sync must require at least seven days of validity.'
+Assert-True ($certificateSyncText.Contains('selected_expiry')) 'Certificate sync must deterministically select the latest valid candidate.'
+Assert-True ($certificateSyncText.Contains('cmp -s')) 'Certificate sync must avoid needless service restarts.'
+Assert-True ($certificateSyncText.Contains('root:sc-maerxmppserver')) 'Certificate directory must use the isolated service group.'
+Assert-True ($certificateSyncText.Contains('certificate root permissions must be exactly 0755')) 'Shared certificate root must be exactly root:root 0755.'
+Assert-True ($certificateSyncText.Contains('previous PEM restored')) 'Certificate sync must restore and verify recovery after a failed restart.'
+$certificateInstallerText = Read-TextNormalized $certificateInstallerPath
+Assert-True ($certificateInstallerText.Contains('50fa7ef143e4b97f7ec528fec03a33b5f690a522c0b49f0c46e2c7540b7afc93')) 'Root helper installer must pin the exact reviewed helper SHA-256.'
+Assert-True ($certificateInstallerText.Contains('/usr/local/libexec/maerxmppserver')) 'Root helper must install outside package-owned FHS paths.'
+Assert-True ($certificateInstallerText.Contains('trap cleanup EXIT') -and $certificateInstallerText.Contains('exit 129') -and $certificateInstallerText.Contains('exit 130') -and $certificateInstallerText.Contains('exit 143')) 'Certificate installer signal traps must terminate explicitly.'
+$bootstrapAdminText = Read-TextNormalized $bootstrapAdminPath
+$pairingSourceText = Read-TextNormalized (Join-Path $repositoryRoot 'src\mod_maer_pairing.erl')
+Assert-True ($pairingSourceText.Contains('User = <<"admin">>')) 'Bootstrap transaction must create only the ACL-authorized admin localpart.'
+Assert-True ($pairingSourceText.Contains('verify_existing_admin(User, Host, Password)')) 'Bootstrap transaction must safely reconcile an existing admin with the same password.'
+Assert-True ($bootstrapAdminText.Contains('pong = net_adm:ping(N)')) 'Bootstrap must prove distribution connectivity before authentication RPCs.'
+Assert-True ($bootstrapAdminText.Contains('ERL_EPMD_ADDRESS=127.0.0.1')) 'Bootstrap distribution must remain loopback-only.'
+Assert-True ($bootstrapAdminText.Contains('-erl_epmd_port 5211 -start_epmd false -dist_listen false')) 'Bootstrap must use the fixed private distribution port without opening a listener.'
+Assert-True ($bootstrapAdminText.Contains('ERL_CRASH_DUMP=/dev/null')) 'Bootstrap must suppress secret-bearing crash dumps.'
+Assert-True ($bootstrapAdminText.Contains('R(mod_maer_pairing,operator_bootstrap_admin,[P])')) 'Bootstrap must use one remote server-side transaction.'
+Assert-True (-not $bootstrapAdminText.Contains('false = R(ejabberd_auth,user_exists')) 'Bootstrap must remain idempotent after an ambiguous RPC result.'
+Assert-True (-not $bootstrapAdminText.Contains('maer-cutover-')) 'Production bootstrap must not create disposable test accounts.'
+Assert-True ($pairingSourceText.Contains('ejabberd_auth:remove_user(User, Host)')) 'Server-side bootstrap transaction must roll back failed validation.'
+Assert-True ($pairingSourceText.Contains('element(5, T) =:= sha256')) 'Server-side bootstrap transaction must prove SCRAM-SHA-256 storage.'
+$bootstrapInstallerText = Read-TextNormalized $bootstrapInstallerPath
+Assert-True ($bootstrapInstallerText.Contains('8c4123bc819a998ec767ce80d449708ccbe486ce4a5822c028e2596ab4a5ee62')) 'Bootstrap installer must pin the exact reviewed helper SHA-256.'
+Assert-True ($bootstrapInstallerText.Contains('/usr/local/libexec/maerxmppserver')) 'Bootstrap installer must place the reviewed tool outside package-owned FHS paths.'
+Assert-True ($bootstrapInstallerText.Contains('trap cleanup EXIT') -and $bootstrapInstallerText.Contains('exit 129') -and $bootstrapInstallerText.Contains('exit 130') -and $bootstrapInstallerText.Contains('exit 143')) 'Bootstrap installer signal traps must terminate explicitly.'
+
+foreach ($shellPath in @($serviceSetupPath, $serviceScriptPath, $uploadMonitorPath, $certificateSyncPath, $certificateInstallerPath, $bootstrapAdminPath, $bootstrapInstallerPath, $prepareShellPath, (Join-Path $testsRoot 'test-service-contract.sh'), (Join-Path $testsRoot 'test-upload-monitor.sh'), (Join-Path $testsRoot 'test-certificate-sync.sh'), (Join-Path $testsRoot 'test-bootstrap-admin.sh'))) {
     Assert-LfShellFile $shellPath
 }
 
@@ -567,7 +738,15 @@ if ($shellExecutable) {
         foreach ($relativeShellPath in @(
             'spksrc-overlay/spk/maerxmppserver/src/service-setup.sh',
             'spksrc-overlay/spk/maerxmppserver/src/service-start-stop.sh',
-            'tests/test-service-contract.sh'
+            'spksrc-overlay/spk/maerxmppserver/src/upload-usage-check.sh',
+            'operator/maer-certificate-sync',
+            'operator/install-certificate-sync-root',
+            'operator/maer-bootstrap-admin',
+            'operator/install-bootstrap-admin-root',
+            'tests/test-service-contract.sh',
+            'tests/test-upload-monitor.sh',
+            'tests/test-certificate-sync.sh',
+            'tests/test-bootstrap-admin.sh'
         )) {
             & $shellExecutable -n $relativeShellPath
             if ($LASTEXITCODE -ne 0) {
@@ -578,6 +757,18 @@ if ($shellExecutable) {
         if ($LASTEXITCODE -ne 0) {
             Add-Failure 'Service behavior contract test failed.'
         }
+        & $shellExecutable 'tests/test-upload-monitor.sh'
+        if ($LASTEXITCODE -ne 0) {
+            Add-Failure 'Global upload monitor behavior test failed.'
+        }
+        & $shellExecutable 'tests/test-certificate-sync.sh'
+        if ($LASTEXITCODE -ne 0) {
+            Add-Failure 'DSM certificate synchronization behavior test failed.'
+        }
+        & $shellExecutable 'tests/test-bootstrap-admin.sh'
+        if ($LASTEXITCODE -ne 0) {
+            Add-Failure 'Bootstrap admin contract test failed.'
+        }
     }
     finally {
         Pop-Location
@@ -587,6 +778,31 @@ else {
     Write-Warning 'sh is unavailable; shell syntax and behavior tests were skipped.'
 }
 
+$isWindowsHost = ($env:OS -eq 'Windows_NT')
+$wslCommand = if ($isWindowsHost) { Get-Command wsl.exe -ErrorAction SilentlyContinue } else { $null }
+if ($isWindowsHost -and $wslCommand) {
+    Push-Location $repositoryRoot
+    try {
+        foreach ($linuxTest in @('packaging/synology/tests/test-certificate-sync.sh', 'packaging/synology/tests/test-bootstrap-admin.sh')) {
+            & $wslCommand.Source -d Ubuntu-26.04 -- /usr/bin/bash $linuxTest
+            if ($LASTEXITCODE -ne 0) { Add-Failure "Required WSL release test failed: $linuxTest" }
+        }
+    }
+    finally { Pop-Location }
+}
+elseif ($isWindowsHost) {
+    Add-Failure 'WSL Ubuntu-26.04 is required for certificate/bootstrap release tests.'
+}
+else {
+    $uname = & uname -s 2>$null
+    if ($LASTEXITCODE -ne 0 -or $uname -ne 'Linux') { Add-Failure 'Linux is required for native certificate/bootstrap release tests.' }
+    else {
+        foreach ($linuxTest in @('packaging/synology/tests/test-certificate-sync.sh', 'packaging/synology/tests/test-bootstrap-admin.sh')) {
+            & /usr/bin/bash $linuxTest
+            if ($LASTEXITCODE -ne 0) { Add-Failure "Required native Linux release test failed: $linuxTest" }
+        }
+    }
+}
 $bashCommand = Get-Command bash -ErrorAction SilentlyContinue
 $bashExecutable = if ($bashCommand) { $bashCommand.Source } else { $null }
 if (-not $bashExecutable) {

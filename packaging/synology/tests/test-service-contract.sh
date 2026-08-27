@@ -6,11 +6,14 @@ set -eu
 
 TESTS_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
 SOURCE_SCRIPT="${TESTS_DIR}/../spksrc-overlay/spk/maerxmppserver/src/service-start-stop.sh"
+SOURCE_SETUP="${TESTS_DIR}/../spksrc-overlay/spk/maerxmppserver/src/service-setup.sh"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/maer-service-test.XXXXXX")
 trap 'rm -rf "${TEST_ROOT}"' EXIT HUP INT TERM
 
 export TEST_ROOT
 export TEST_VAR="${TEST_ROOT}/var"
+export MAER_CERTIFICATE_FILE="${TEST_VAR}/certs/xmpp.pem"
+export MAER_CERTIFICATE_OWNER="$(id -un):$(id -gn)"
 export TEST_LOG="${TEST_ROOT}/commands.log"
 export TEST_RUNNING="${TEST_ROOT}/running"
 export TEST_PID_FILE="${TEST_VAR}/run/ejabberd.pid"
@@ -59,10 +62,8 @@ EOF_ERL
 
 cat > "${TEST_ROOT}/target/bin/stat" <<'EOF_STAT'
 #!/bin/sh
-if [ "${1:-}" = '-c' ] && [ "${2:-}" = '%a' ]; then
-    printf '%s\n' "${TEST_CERT_MODE:-600}"
-    exit 0
-fi
+if [ "${1:-}" = '-c' ] && [ "${2:-}" = '%a' ]; then printf '%s\n' "${TEST_CERT_MODE:-640}"; exit 0; fi
+if [ "${1:-}" = '-c' ] && [ "${2:-}" = '%U:%G' ]; then printf '%s\n' "${MAER_CERTIFICATE_OWNER}"; exit 0; fi
 exit 1
 EOF_STAT
 
@@ -96,7 +97,8 @@ EOF_CTL
 chmod 755 "${TEST_ROOT}/target/bin/ss" "${TEST_ROOT}/target/bin/erl" "${TEST_ROOT}/target/bin/stat" "${TEST_ROOT}/target/bin/ejabberdctl"
 printf '%s\n' 'hosts: [xmpp.maer.fr]' > "${TEST_VAR}/config/ejabberd.yml"
 printf '%s\n' 'test certificate fixture' > "${TEST_VAR}/certs/xmpp.pem"
-chmod 600 "${TEST_VAR}/config/ejabberd.yml" "${TEST_VAR}/certs/xmpp.pem"
+chmod 600 "${TEST_VAR}/config/ejabberd.yml"
+chmod 640 "${TEST_VAR}/certs/xmpp.pem"
 
 reset_case()
 {
@@ -149,7 +151,7 @@ export TEST_CERT_MODE=644
 if "${TEST_ROOT}/scripts/start-stop-status" start >"${TEST_ROOT}/certificate-mode.out" 2>&1; then
     fail_test 'weak certificate permissions were accepted'
 fi
-grep -q 'TLS certificate permissions must be 0400 or 0600' "${TEST_ROOT}/certificate-mode.out" || fail_test 'certificate mode error is missing'
+grep -q 'TLS certificate permissions must be 0640' "${TEST_ROOT}/certificate-mode.out" || fail_test 'certificate mode error is missing'
 
 reset_case
 "${TEST_ROOT}/scripts/start-stop-status" start >"${TEST_ROOT}/start.out" 2>&1 || fail_test 'clean start failed'
@@ -175,5 +177,34 @@ grep -q '^stop$' "${TEST_LOG}" || fail_test 'failed start did not request gracef
 if grep -q 'kill -9' "${TEST_LOG}"; then
     fail_test 'hard kill fallback was used'
 fi
+
+clean_install_var="${TEST_ROOT}/clean-install-var"
+mkdir -p "${clean_install_var}"
+(
+    . "${SOURCE_SETUP}"
+    MAER_VAR_DIR="${clean_install_var}"
+    validate_preinst
+) || fail_test 'empty package data directory was rejected'
+
+mkdir -p "${clean_install_var}/config"
+printf '%s\n' 'legacy profile fixture' > "${clean_install_var}/config/ejabberd.yml"
+if (
+    . "${SOURCE_SETUP}"
+    MAER_VAR_DIR="${clean_install_var}"
+    validate_preinst
+) >"${TEST_ROOT}/retained-data.out" 2>&1
+then
+    fail_test 'retained package state was accepted by a clean installation'
+fi
+grep -q 'requires an empty package data directory' "${TEST_ROOT}/retained-data.out" || fail_test 'retained-data refusal is not explicit'
+
+if (
+    . "${SOURCE_SETUP}"
+    validate_preupgrade
+) >"${TEST_ROOT}/upgrade.out" 2>&1
+then
+    fail_test 'in-place upgrade was accepted'
+fi
+grep -q 'In-place upgrades.*intentionally refused' "${TEST_ROOT}/upgrade.out" || fail_test 'upgrade refusal is not explicit'
 
 echo 'service contract tests passed'

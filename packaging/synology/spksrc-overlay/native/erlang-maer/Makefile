@@ -28,6 +28,7 @@ CONFIGURE_ARGS += --without-et
 CONFIGURE_ARGS += --without-observer
 CONFIGURE_ARGS += --without-reltool
 CONFIGURE_ARGS += --disable-pgo
+CONFIGURE_ARGS += --enable-deterministic-build
 CONFIGURE_ARGS += --enable-dynamic-ssl-lib
 CONFIGURE_ARGS += --prefix=$(INSTALL_DIR)$(INSTALL_PREFIX)
 CONFIGURE_ARGS += CFLAGS="-O2 -g -D_GNU_SOURCE"

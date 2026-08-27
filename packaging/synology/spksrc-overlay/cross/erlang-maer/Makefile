@@ -32,6 +32,7 @@ CONFIGURE_ARGS += --without-debugger
 CONFIGURE_ARGS += --without-et
 CONFIGURE_ARGS += --without-observer
 CONFIGURE_ARGS += --without-reltool
+CONFIGURE_ARGS += --enable-deterministic-build
 CONFIGURE_ARGS += --enable-dynamic-ssl-lib
 CONFIGURE_ARGS += --with-ssl=$(STAGING_INSTALL_PREFIX)
 CONFIGURE_ARGS += --disable-year2038

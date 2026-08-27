@@ -8,14 +8,31 @@
 hosts:
   - xmpp.maer.fr
 
-### Le handler d'association doit être placé uniquement sur le listener HTTPS
-### public. Ne jamais le monter sur le listener d'administration (5280).
+### Le handler d'association doit être placé uniquement sur le backend HTTPS
+### loopback publié par le reverse proxy canonique 443. Ne jamais le monter sur
+### le listener d'administration (5280) ni ouvrir directement 5443.
 listen:
   -
     port: 5443
-    ip: "::"
+    ip: 127.0.0.1
     module: ejabberd_http
     tls: true
+    tls_compression: false
+    ciphers: "HIGH:!aNULL:!eNULL:!3DES:!RC4:!MD5:!PSK:!SRP:@STRENGTH"
+    protocol_options:
+      - no_sslv3
+      - no_tlsv1
+      - no_tlsv1_1
+      - cipher_server_preference
+      - no_compression
+    custom_headers:
+      Access-Control-Allow-Origin: https://xmpp.maer.fr
+      Content-Security-Policy: "default-src 'none'; frame-ancestors 'none'"
+      Referrer-Policy: no-referrer
+      Strict-Transport-Security: "max-age=31536000"
+      Vary: Origin
+      X-Content-Type-Options: nosniff
+      X-Frame-Options: DENY
     request_handlers:
       /maer-pairing: mod_maer_pairing
 

@@ -88,7 +88,7 @@ assert_runtime_files()
     [ -f "${EJABBERD_CONFIG_PATH}" ] || fail "configuration file is missing"
     [ ! -L "${EJABBERD_CONFIG_PATH}" ] || fail "configuration must not be a symbolic link"
 
-    certificate_file="${MAER_VAR_DIR}/certs/xmpp.pem"
+    certificate_file="${MAER_CERTIFICATE_FILE:-/usr/local/etc/certificate/maerxmppserver/maerxmppserver_client/xmpp.pem}"
     [ -f "${certificate_file}" ] || fail "combined TLS certificate is missing: ${certificate_file}"
     [ ! -L "${certificate_file}" ] || fail "TLS certificate must not be a symbolic link"
     [ -r "${certificate_file}" ] || fail "TLS certificate is not readable by the package user"
@@ -96,10 +96,10 @@ assert_runtime_files()
     if ! certificate_mode=$(stat -c '%a' "${certificate_file}" 2>/dev/null); then
         fail "cannot verify TLS certificate permissions"
     fi
-    case "${certificate_mode}" in
-        400|600) ;;
-        *) fail "TLS certificate permissions must be 0400 or 0600" ;;
-    esac
+    [ "${certificate_mode}" = 640 ] || fail "TLS certificate permissions must be 0640"
+    certificate_owner=$(stat -c '%U:%G' "${certificate_file}" 2>/dev/null) || fail "cannot inspect TLS certificate owner"
+    expected_owner=${MAER_CERTIFICATE_OWNER:-root:sc-maerxmppserver}
+    [ "${certificate_owner}" = "${expected_owner}" ] || fail "TLS certificate owner must be ${expected_owner}"
 }
 
 check_config()

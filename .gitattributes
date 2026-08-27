@@ -1,7 +1,43 @@
-# Build and Erlang sources must remain usable from WSL/Linux after a Windows clone.
-*.sh text eol=lf
+# MAER XMPP Server is built on Linux/WSL. Keep every source, packaging recipe,
+# lock file and license byte-identical after Windows and Linux clones.
+* text=auto eol=lf
+
+*.ac text eol=lf
+*.app text eol=lf
+*.config text eol=lf
+*.cfg text eol=lf
+*.doap text eol=lf
 *.erl text eol=lf
+*.ex text eol=lf
+*.exs text eol=lf
 *.hrl text eol=lf
 *.in text eol=lf
+*.json text eol=lf
+*.lock text eol=lf
+*.md text eol=lf
+*.patch text eol=lf
+*.plist text eol=lf
+*.ps1 text eol=lf
+*.sc text eol=lf
+*.sh text eol=lf
+*.txt text eol=lf
+*.xml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+.gitattributes text eol=lf
+.gitignore text eol=lf
+COPYING text eol=lf
+Makefile text eol=lf
 configure text eol=lf
 configure.ac text eol=lf
+digests text eol=lf
+PLIST text eol=lf
+PLIST.auto text eol=lf
+
+*.gif binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.zip binary

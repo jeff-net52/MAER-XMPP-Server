@@ -1,0 +1,24 @@
+diff --git rebar.config rebar.config
+index 63bc991b..4b55d5f0 100644
+--- rebar.config
++++ rebar.config
+@@ -114,7 +114,8 @@
+ 		   "src/gen_mod.erl", "src/mod_muc_room.erl",
+ 		   "src/mod_push.erl", "src/xmpp_socket.erl"]}.
+ 
+-{erl_opts, [{i, "include"},
++{erl_opts, [deterministic,
++            {i, "include"},
+             {if_version_below, "26", {d, 'OTP_BELOW_26'}},
+             {if_version_below, "27", {d, 'OTP_BELOW_27'}},
+             {if_version_below, "27", {feature, maybe_expr, enable}},
+@@ -156,7 +157,8 @@
+ 
+ {if_rebar3, {overrides,
+              [
+-              %% Temporary workaround for some warnings in Erlang/OTP 29
++              {add, [{erl_opts, [deterministic]}]},
++              %% Temporary workaround for some warnings in Erlang/OTP 29
+               {if_version_above, "28",
+                {add, [{erl_opts, [nowarn_deprecated_catch]}]}},
+               {if_version_above, "28",

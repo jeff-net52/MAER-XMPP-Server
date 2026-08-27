@@ -1,0 +1,182 @@
+#!/bin/sh
+# Synchronize the DSM-managed certificate without relying on SERVICE_CERT,
+# which DSM 7 does not expose to third-party packages. Must run as root.
+set -eu
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+LC_ALL=C; export LC_ALL
+umask 077
+
+HOSTNAME_TO_MATCH=${MAER_CERT_HOST:-xmpp.maer.fr}
+ARCHIVE_DIR=${MAER_CERT_ARCHIVE:-/usr/syno/etc/certificate/_archive}
+destination=${MAER_CERT_DESTINATION:-/usr/local/etc/certificate/maerxmppserver/maerxmppserver_client/xmpp.pem}
+OPENSSL=${MAER_OPENSSL:-/usr/bin/openssl}
+CHOWN=${MAER_CHOWN:-/bin/chown}
+SYNOPKG=${MAER_SYNOPKG:-/usr/syno/bin/synopkg}
+OWNER=${MAER_CERT_OWNER:-root:sc-maerxmppserver}
+DIR_OWNER=${MAER_CERT_DIR_OWNER:-root:sc-maerxmppserver}
+STATE_DIR=${MAER_CERT_STATE_DIR:-/usr/local/var/lib/maerxmppserver}
+lock_dir=$STATE_DIR/certificate-sync.lock
+snapshot_root=
+tmp=
+backup=
+
+fail() { printf 'maer-certificate-sync: %s\n' "$*" >&2; exit 1; }
+cleanup() {
+    [ -z "$tmp" ] || rm -f "$tmp"
+    [ -z "$backup" ] || rm -f "$backup"
+    if [ -n "$snapshot_root" ]; then
+        case "$snapshot_root" in "$STATE_DIR"/certificate-sync.snapshot.*)
+            [ -d "$snapshot_root" ] && [ ! -L "$snapshot_root" ] && rm -rf "$snapshot_root" || true ;;
+        *) fail 'refusing unsafe snapshot cleanup' ;;
+        esac
+    fi
+    [ ! -d "$lock_dir" ] || { rm -f "$lock_dir/owner"; rmdir "$lock_dir" 2>/dev/null || true; }
+}
+served_matches() {
+    [ "${MAER_SKIP_LIVE_PROBE:-0}" = 1 ] && return 0
+    expected=$1
+    https=$($OPENSSL s_client -connect 127.0.0.1:5443 -servername "$HOSTNAME_TO_MATCH" </dev/null 2>/dev/null | $OPENSSL x509 -noout -fingerprint -sha256 2>/dev/null) || return 1
+    xmpp=$($OPENSSL s_client -starttls xmpp -xmpphost "$HOSTNAME_TO_MATCH" -connect 127.0.0.1:5222 </dev/null 2>/dev/null | $OPENSSL x509 -noout -fingerprint -sha256 2>/dev/null) || return 1
+    [ "$https" = "$expected" ] && [ "$xmpp" = "$expected" ]
+}
+expiry_key() {
+    value=$1; set -- $value
+    case $1 in Jan) month=01;; Feb) month=02;; Mar) month=03;; Apr) month=04;;
+        May) month=05;; Jun) month=06;; Jul) month=07;; Aug) month=08;;
+        Sep) month=09;; Oct) month=10;; Nov) month=11;; Dec) month=12;; *) return 1;; esac
+    day=$(printf '%02d' "$2") || return 1
+    clock=$(printf '%s' "$3" | tr -d ':')
+    printf '%s%s%s%s\n' "$4" "$month" "$day" "$clock"
+}
+current_uid=$(id -u)
+if [ "$current_uid" -eq 0 ]; then
+    [ "${MAER_ALLOW_NON_ROOT:-0}" != 1 ] || fail 'root must not enable test mode'
+    for override in MAER_CERT_ARCHIVE MAER_CERT_DESTINATION MAER_OPENSSL MAER_CHOWN MAER_SYNOPKG MAER_CERT_OWNER MAER_CERT_DIR_OWNER MAER_CERT_STATE_DIR MAER_SKIP_LIVE_PROBE; do
+        eval "is_set=\${$override+x}"
+        [ -z "$is_set" ] || fail "$override is test-only"
+    done
+else
+    [ "${MAER_ALLOW_NON_ROOT:-0}" = 1 ] || fail 'must run as root'
+fi
+[ -d "$ARCHIVE_DIR" ] || fail 'DSM certificate archive is unavailable'
+[ -x "$OPENSSL" ] || fail 'openssl is unavailable'
+[ ! -e "$STATE_DIR" ] || { [ -d "$STATE_DIR" ] && [ ! -L "$STATE_DIR" ]; } || fail 'state directory must be a non-symlink directory'
+mkdir -p "$STATE_DIR"; "$CHOWN" root:root "$STATE_DIR"; chmod 700 "$STATE_DIR"
+mkdir "$lock_dir" 2>/dev/null || fail 'another certificate synchronization is running'
+trap cleanup EXIT
+trap 'cleanup; trap - EXIT; exit 129' HUP
+trap 'cleanup; trap - EXIT; exit 130' INT
+trap 'cleanup; trap - EXIT; exit 143' TERM
+printf '%s %s\n' "$$" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >"$lock_dir/owner"
+snapshot_root=$(mktemp -d "$STATE_DIR/certificate-sync.snapshot.XXXXXX") || fail 'unable to allocate certificate snapshot'
+
+selected=
+selected_expiry=0
+ARCHIVE_ID=${MAER_CERT_ARCHIVE_ID:-}
+[ -n "$ARCHIVE_ID" ] || fail 'MAER_CERT_ARCHIVE_ID is required (use auto only for deterministic latest-expiry selection)'
+[ "$ARCHIVE_ID" = auto ] || case "$ARCHIVE_ID" in *[!A-Za-z0-9_-]*) fail 'invalid certificate archive id';; esac
+[ "$current_uid" -ne 0 ] || [ "$ARCHIVE_ID" != auto ] || fail 'root requires an explicit DSM certificate archive id'
+if [ "$ARCHIVE_ID" = auto ]; then candidate_glob="$ARCHIVE_DIR"/*; else candidate_glob="$ARCHIVE_DIR/$ARCHIVE_ID"; fi
+for cert_dir in $candidate_glob; do
+    [ -d "$cert_dir" ] && [ ! -L "$cert_dir" ] || continue
+    [ -f "$cert_dir/cert.pem" ] && [ ! -L "$cert_dir/cert.pem" ] || continue
+    [ -f "$cert_dir/privkey.pem" ] && [ ! -L "$cert_dir/privkey.pem" ] || continue
+    [ -f "$cert_dir/fullchain.pem" ] && [ ! -L "$cert_dir/fullchain.pem" ] || continue
+    snapshot=$snapshot_root/$(basename "$cert_dir")
+    mkdir "$snapshot" || continue
+    /bin/cp "$cert_dir/cert.pem" "$cert_dir/fullchain.pem" "$cert_dir/privkey.pem" "$snapshot/" || continue
+    chmod 600 "$snapshot"/*
+    "$OPENSSL" x509 -in "$snapshot/cert.pem" -noout -checkend 604800 >/dev/null 2>&1 || continue
+    "$OPENSSL" x509 -in "$snapshot/cert.pem" -noout -ext subjectAltName 2>/dev/null | grep -F "DNS:$HOSTNAME_TO_MATCH" >/dev/null || continue
+    "$OPENSSL" x509 -in "$snapshot/cert.pem" -noout -checkhost "$HOSTNAME_TO_MATCH" >/dev/null 2>&1 || continue
+    not_before=$($OPENSSL x509 -in "$snapshot/cert.pem" -noout -startdate 2>/dev/null | cut -d= -f2-) || continue
+    start_key=$(expiry_key "$not_before") || continue
+    now_key=$(date -u '+%Y%m%d%H%M%S') || continue
+    [ "$start_key" \< "$now_key" ] || [ "$start_key" = "$now_key" ] || continue
+    cert_key=$($OPENSSL x509 -in "$snapshot/cert.pem" -pubkey -noout 2>/dev/null | $OPENSSL pkey -pubin -outform DER 2>/dev/null | $OPENSSL dgst -sha256 2>/dev/null) || continue
+    private_key=$($OPENSSL pkey -in "$snapshot/privkey.pem" -pubout -outform DER 2>/dev/null | $OPENSSL dgst -sha256 2>/dev/null) || continue
+    [ -n "$cert_key" ] && [ "$cert_key" = "$private_key" ] || continue
+    not_after=$($OPENSSL x509 -in "$snapshot/cert.pem" -noout -enddate 2>/dev/null | cut -d= -f2-) || continue
+    expiry=$(expiry_key "$not_after") || continue
+    if [ "$expiry" \> "$selected_expiry" ]; then selected=$snapshot; selected_expiry=$expiry; fi
+done
+[ -n "$selected" ] || fail "no valid DSM certificate covers $HOSTNAME_TO_MATCH with a matching private key"
+
+cert_dir=${destination%/*}
+[ "$cert_dir" != "$destination" ] || fail 'invalid certificate destination'
+[ "$current_uid" -ne 0 ] || {
+    for parent in /usr/local /usr/local/etc; do
+        [ -d "$parent" ] && [ ! -L "$parent" ] || fail "unsafe certificate ancestor: $parent"
+        [ "$(stat -c '%u' "$parent" 2>/dev/null)" = 0 ] || fail "certificate ancestor is not root-owned: $parent"
+        mode=$(stat -c '%a' "$parent" 2>/dev/null) || fail "cannot inspect certificate ancestor: $parent"
+        case "$mode" in *[2367][0-7]|*[0-7][2367]) fail "certificate ancestor is group/other-writable: $parent";; esac
+    done
+    if [ ! -e /usr/local/etc/certificate ]; then mkdir /usr/local/etc/certificate; "$CHOWN" root:root /usr/local/etc/certificate; chmod 755 /usr/local/etc/certificate; fi
+    [ -d /usr/local/etc/certificate ] && [ ! -L /usr/local/etc/certificate ] || fail 'certificate root is unsafe'
+    [ "$(stat -c '%u' /usr/local/etc/certificate 2>/dev/null)" = 0 ] || fail 'certificate root is not root-owned'
+    certificate_root_mode=$(stat -c '%a' /usr/local/etc/certificate 2>/dev/null) || fail 'cannot inspect certificate root mode'
+    [ "$certificate_root_mode" = 755 ] || fail 'certificate root permissions must be exactly 0755'
+}
+[ ! -e /usr/local/etc/certificate ] || [ ! -L /usr/local/etc/certificate ] || fail 'certificate root must not be a symlink'
+[ ! -e /usr/local/etc/certificate/maerxmppserver ] || [ ! -L /usr/local/etc/certificate/maerxmppserver ] || fail 'package certificate directory must not be a symlink'
+[ ! -e "$cert_dir" ] || [ ! -L "$cert_dir" ] || fail 'certificate directory must not be a symlink'
+[ ! -e "$destination" ] || [ ! -L "$destination" ] || fail 'destination PEM must not be a symlink'
+mkdir -p "$cert_dir"
+package_cert_dir=${cert_dir%/*}
+[ ! -e "$package_cert_dir" ] || [ ! -L "$package_cert_dir" ] || fail 'package certificate parent must not be a symlink'
+mkdir -p "$package_cert_dir" "$cert_dir"
+chmod 750 "$package_cert_dir" "$cert_dir"
+"$CHOWN" "$DIR_OWNER" "$package_cert_dir" "$cert_dir"
+chmod 750 "$cert_dir"
+"$CHOWN" "$DIR_OWNER" "$cert_dir"
+tmp=$(mktemp "$cert_dir/.xmpp.pem.new.XXXXXX") || fail 'unable to allocate atomic PEM'
+backup=$(mktemp "$cert_dir/.xmpp.pem.previous.XXXXXX") || fail 'unable to allocate rollback PEM'
+rm -f "$backup"
+
+{ /bin/cat "$selected/fullchain.pem"; printf '\n'; /bin/cat "$selected/privkey.pem"; printf '\n'; } >"$tmp"
+chmod 640 "$tmp"
+"$CHOWN" "$OWNER" "$tmp"
+"$OPENSSL" x509 -in "$tmp" -noout -checkend 604800 >/dev/null 2>&1 || fail 'generated PEM failed certificate validation'
+"$OPENSSL" x509 -in "$tmp" -noout -ext subjectAltName 2>/dev/null | grep -F "DNS:$HOSTNAME_TO_MATCH" >/dev/null || fail 'generated PEM has no matching DNS SAN'
+"$OPENSSL" x509 -in "$tmp" -noout -checkhost "$HOSTNAME_TO_MATCH" >/dev/null 2>&1 || fail 'generated PEM has the wrong hostname'
+source_fingerprint=$($OPENSSL x509 -in "$selected/cert.pem" -noout -fingerprint -sha256 2>/dev/null) || fail 'source fingerprint unavailable'
+generated_fingerprint=$($OPENSSL x509 -in "$tmp" -noout -fingerprint -sha256 2>/dev/null) || fail 'generated fingerprint unavailable'
+[ "$source_fingerprint" = "$generated_fingerprint" ] || fail 'fullchain leaf differs from cert.pem'
+"$OPENSSL" pkey -in "$tmp" -noout >/dev/null 2>&1 || fail 'generated PEM failed private-key validation'
+generated_key=$($OPENSSL x509 -in "$tmp" -pubkey -noout 2>/dev/null | $OPENSSL pkey -pubin -outform DER 2>/dev/null | $OPENSSL dgst -sha256 2>/dev/null) || fail 'generated certificate key unavailable'
+generated_private=$($OPENSSL pkey -in "$tmp" -pubout -outform DER 2>/dev/null | $OPENSSL dgst -sha256 2>/dev/null) || fail 'generated private key unavailable'
+[ "$generated_key" = "$generated_private" ] || fail 'generated certificate and private key do not match'
+if [ -f "$destination" ] && cmp -s "$tmp" "$destination"; then
+    chmod 640 "$destination"; "$CHOWN" "$OWNER" "$destination"
+    rm -f "$tmp"
+    cleanup; trap - EXIT HUP INT TERM
+    printf 'maer-certificate-sync: certificate already current for %s\n' "$HOSTNAME_TO_MATCH"
+    exit 0
+fi
+
+active=0
+if "$SYNOPKG" status maerxmppserver >/dev/null 2>&1; then
+    active=1
+else
+    status_result=$?
+    [ "$status_result" -eq 17 ] || fail "unexpected synopkg status result: $status_result"
+fi
+[ ! -f "$destination" ] || /bin/cp -p "$destination" "$backup"
+/bin/mv -f "$tmp" "$destination"
+
+if [ "$active" -eq 1 ]; then
+    if ! "$SYNOPKG" restart maerxmppserver >/dev/null 2>&1 || ! "$SYNOPKG" status maerxmppserver >/dev/null 2>&1 || ! served_matches "$generated_fingerprint"; then
+        if [ -f "$backup" ]; then /bin/mv -f "$backup" "$destination"; else rm -f "$destination"; fi
+        recovery_fingerprint=
+        [ ! -f "$destination" ] || recovery_fingerprint=$($OPENSSL x509 -in "$destination" -noout -fingerprint -sha256 2>/dev/null) || recovery_fingerprint=
+        if [ -n "$recovery_fingerprint" ] && "$SYNOPKG" restart maerxmppserver >/dev/null 2>&1 && "$SYNOPKG" status maerxmppserver >/dev/null 2>&1 && served_matches "$recovery_fingerprint"; then
+            fail 'new PEM restart failed; previous PEM restored and recovery succeeded'
+        fi
+        fail 'new PEM restart failed; previous PEM restored but recovery failed'
+    fi
+fi
+rm -f "$backup"
+cleanup; trap - EXIT HUP INT TERM
+printf 'maer-certificate-sync: certificate synchronized for %s\n' "$HOSTNAME_TO_MATCH"

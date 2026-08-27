@@ -29,11 +29,12 @@ modules:
   mod_maer_pairing: {}
 ```
 
-Le chemin externe est `https://xmpp.maer.fr/maer-pairing/v1`. Le listener
-5443 doit présenter un certificat valide, ou être joint par un reverse proxy
-TLS qui vérifie également le certificat du listener. Le handler ne doit jamais
-être ajouté au listener administratif 5280. Un accès HTTP en clair reçoit une
-réponse 426 et n'est pas redirigé.
+Le chemin externe est `https://xmpp.maer.fr/maer-pairing/v1`. Dans le profil
+Synology canonique, le listener 5443 est lié à `127.0.0.1` et rejoint uniquement
+par le reverse proxy TLS public 443. Le proxy doit envoyer le SNI
+`xmpp.maer.fr`, vérifier le certificat du listener et ne jamais publier 5443.
+Le handler ne doit jamais être ajouté au listener administratif 5280. Un accès
+HTTP en clair reçoit une réponse 426 et n'est pas redirigé.
 
 Le reverse proxy doit remplacer, et non concaténer, tout en-tête d'adresse
 client transmis à ejabberd. Sinon un client pourrait contourner la limite par
@@ -65,7 +66,11 @@ synchroniser l'horloge du NAS par NTP.
   connexions, bloque les reconnexions utilisables et déclenche des tentatives
   périodiques jusqu’à la suppression effective du jeton ;
 - les réponses interdisent la mise en cache et aucune erreur ne contient de
-  jeton.
+  jeton ;
+- le throttling des IQ renvoie la condition XMPP standard `policy-violation`,
+  afin que les clients puissent afficher « trop de tentatives, réessayez plus
+  tard ». `resource-constraint` est réservé à la limite maximale d'appareils
+  liés au compte.
 
 Les jetons OAuth doivent rester disponibles en clair dans le stockage privé du
 serveur afin que l'API ejabberd puisse les révoquer. Les permissions du paquet,

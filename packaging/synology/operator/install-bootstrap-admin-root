@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH; umask 077
+EXPECTED_SHA256=8c4123bc819a998ec767ce80d449708ccbe486ce4a5822c028e2596ab4a5ee62
+SOURCE=${1:-./maer-bootstrap-admin}
+DEST_DIR=/usr/local/libexec/maerxmppserver
+DEST=$DEST_DIR/bootstrap-admin
+fail() { printf 'install-bootstrap-admin-root: %s\n' "$*" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || fail 'must run as root'
+[ -f "$SOURCE" ] && [ ! -L "$SOURCE" ] || fail 'source must be a regular non-symlink file'
+[ "$(sha256sum "$SOURCE" | awk '{print $1}')" = "$EXPECTED_SHA256" ] || fail 'source SHA-256 mismatch'
+[ ! -e "$DEST_DIR" ] || [ ! -L "$DEST_DIR" ] || fail 'destination directory is a symlink'
+[ ! -e /usr/local/libexec ] || { [ -d /usr/local/libexec ] && [ ! -L /usr/local/libexec ]; } || fail 'libexec parent is unsafe'
+mkdir -p /usr/local/libexec; chown root:root /usr/local/libexec; chmod go-w /usr/local/libexec
+[ ! -e "$DEST" ] || [ ! -L "$DEST" ] || fail 'destination is a symlink'
+mkdir -p "$DEST_DIR"; chown root:root "$DEST_DIR"; chmod 700 "$DEST_DIR"
+tmp=$(mktemp "$DEST_DIR/.bootstrap-admin.XXXXXX") || fail 'unable to allocate destination'
+cleanup() { rm -f "$tmp"; }
+trap cleanup EXIT
+trap 'cleanup; trap - EXIT; exit 129' HUP
+trap 'cleanup; trap - EXIT; exit 130' INT
+trap 'cleanup; trap - EXIT; exit 143' TERM
+cp "$SOURCE" "$tmp"; chown root:root "$tmp"; chmod 700 "$tmp"
+[ "$(sha256sum "$tmp" | awk '{print $1}')" = "$EXPECTED_SHA256" ] || fail 'copied SHA-256 mismatch'
+mv -f "$tmp" "$DEST"; trap - EXIT HUP INT TERM
+printf 'Installed root-owned helper: %s\n' "$DEST"

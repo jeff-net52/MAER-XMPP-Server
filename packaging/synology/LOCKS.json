@@ -3,7 +3,7 @@
   "package": {
     "name": "maerxmppserver",
     "display_name": "MAER XMPP Server",
-    "version": "26.07.0-2",
+    "version": "26.07.0-4",
     "arch": "armada38x",
     "os_min_ver": "7.2-72806"
   },
@@ -44,6 +44,6 @@
   },
   "assets": {
     "maer_mark_sha256": "266aef41e3d91d08923ee64d6cb2b0ee8aac375579a72532d5771cae123c1eb9",
-    "copying_sha256": "8f0fc61b2b9ff3f4d7887a525100e786bedf1b39dde68f3831d363fda61818a1"
+    "copying_sha256": "469bb8cfa3ef22c102875ff31932450c075e6908ff3f7d36893485c0c30898eb"
   }
 }

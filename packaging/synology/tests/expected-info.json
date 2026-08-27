@@ -1,6 +1,6 @@
 {
   "package": "maerxmppserver",
-  "version": "26.07.0-2",
+  "version": "26.07.0-4",
   "displayname": "MAER XMPP Server",
   "distributor": "MAER",
   "distributor_url": "https://github.com/jeff-net52/MAER-XMPP-Server",
@@ -9,5 +9,5 @@
   "startable": true,
   "run_as": "package",
   "username": "sc-maerxmppserver",
-  "groupname": "synocommunity"
+  "groupname": "sc-maerxmppserver"
 }

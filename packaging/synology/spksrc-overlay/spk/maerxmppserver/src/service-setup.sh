@@ -75,6 +75,32 @@ install_runtime_defaults()
     install_default_file inetrc
 }
 
+validate_preinst()
+{
+    # A retained var directory could contain the vulnerable configuration or
+    # account database from an older revision.  Revision 4 deliberately has no
+    # in-place migration path: the operator must remove retained package data
+    # and perform a genuinely clean installation.
+    if [ -d "${MAER_VAR_DIR}" ]; then
+        legacy_entry=$(find "${MAER_VAR_DIR}" -mindepth 1 -maxdepth 1 -print -quit) || {
+            echo "Cannot inspect retained package data; refusing installation." >&2
+            exit 1
+        }
+        if [ -n "${legacy_entry}" ]; then
+            echo "MAER XMPP Server 26.07.0-4 requires an empty package data directory." >&2
+            echo "Remove the previous package and its retained data, then install revision 4 cleanly." >&2
+            exit 1
+        fi
+    fi
+}
+
+validate_preupgrade()
+{
+    echo "In-place upgrades to MAER XMPP Server 26.07.0-4 are intentionally refused." >&2
+    echo "Export any required backup, uninstall the previous revision with its data, then perform a clean installation." >&2
+    exit 1
+}
+
 service_postinst()
 {
     install_runtime_defaults
@@ -82,5 +108,6 @@ service_postinst()
 
 service_postupgrade()
 {
-    install_runtime_defaults
+    echo "Unexpected upgrade hook: revision 4 supports clean installation only." >&2
+    exit 1
 }
