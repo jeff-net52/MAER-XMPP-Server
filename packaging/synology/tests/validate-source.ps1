@@ -437,9 +437,9 @@ Assert-Equal $locks.spksrc.commit '954871e356f7f990c179eb58af11c20d82872d8f' 'sp
 Assert-Equal $locks.toolchain.target 'armada38x-7.1' 'Toolchain target lock mismatch.'
 Assert-Equal $locks.toolchain.triplet 'arm-unknown-linux-gnueabi' 'Toolchain triplet lock mismatch.'
 Assert-True ([bool]$locks.toolchain.hard_float) 'Toolchain must remain hard-float.'
-Assert-Equal $locks.maer_xmpp_server.commit 'e98520dbd6f8715e0fdfcc431052dfd4c6d6b8cc' 'MAER public source commit lock mismatch.'
-Assert-Equal $locks.maer_xmpp_server.archive 'https://github.com/jeff-net52/MAER-XMPP-Server/archive/e98520dbd6f8715e0fdfcc431052dfd4c6d6b8cc.tar.gz' 'MAER public source archive URL mismatch.'
-Assert-Equal $locks.maer_xmpp_server.bytes 3272821 'MAER public source archive size mismatch.'
+Assert-Equal $locks.maer_xmpp_server.commit 'fea59faa0224c7a8f52751eed0bd4d21f55c8d93' 'MAER public source commit lock mismatch.'
+Assert-Equal $locks.maer_xmpp_server.archive 'https://github.com/jeff-net52/MAER-XMPP-Server/archive/fea59faa0224c7a8f52751eed0bd4d21f55c8d93.tar.gz' 'MAER public source archive URL mismatch.'
+Assert-Equal $locks.maer_xmpp_server.bytes 3272795 'MAER public source archive size mismatch.'
 Assert-True (-not ($locks.maer_xmpp_server.PSObject.Properties.Name -contains 'tag')) 'MAER source lock must not depend on a tag.'
 
 $nativeOtpMakefile = Read-TextNormalized (Join-Path $overlayRoot 'native\erlang-maer\Makefile')

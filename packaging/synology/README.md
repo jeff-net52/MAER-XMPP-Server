@@ -131,7 +131,7 @@ annoncés aux clients.
   neutralise les chemins et options de compilation incorporés et fixe
   `SOURCE_DATE_EPOCH` à la date publique de cette version ;
 - la source publique MAER au commit immuable
-  `e98520dbd6f8715e0fdfcc431052dfd4c6d6b8cc`, et les empreintes exactes de
+  `fea59faa0224c7a8f52751eed0bd4d21f55c8d93`, et les empreintes exactes de
   son archive GitHub ;
 - les deux couches tar du SPK à la date UTC publique du paquet, avec un ordre
   lexical stable et un en-tête gzip sans horodatage. Deux réassemblages
