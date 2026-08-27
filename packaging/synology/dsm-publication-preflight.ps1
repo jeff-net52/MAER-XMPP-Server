@@ -202,14 +202,27 @@ function Test-XmppStartTls {
             Add-Failure 'Public XEP-0077 registration is still advertised.'
         }
 
+        # An unauthenticated client is not allowed to send arbitrary IQ stanzas after
+        # STARTTLS. Depending on the ejabberd release, probing XEP-0077 here either
+        # returns an IQ error or closes the stream as a protocol violation. The
+        # authoritative publication check is therefore the absence of the register
+        # feature above; accepting a stream close avoids treating strict enforcement
+        # as a deployment failure.
         $registrationProbe = "<iq type='get' id='maer-preflight-register'><query xmlns='jabber:iq:register'/></iq>"
         Write-StreamText -Stream $tls -Text $registrationProbe
-        $registrationResponse = Read-StreamUntil -Stream $tls `
-            -Pattern '<iq\b[^>]*\bid=[''"]maer-preflight-register[''"][^>]*>.*?</iq>' `
-            -Description 'XEP-0077 refusal'
-        if ($registrationResponse -notmatch '<iq\b[^>]*\btype=[''"]error[''"]' -or
-            $registrationResponse -notmatch '<(?:service-unavailable|forbidden|not-allowed)\b') {
-            Add-Failure 'Public XEP-0077 registration was not refused with a protocol error.'
+        try {
+            $registrationResponse = Read-StreamUntil -Stream $tls `
+                -Pattern '<iq\b[^>]*\bid=[''"]maer-preflight-register[''"][^>]*>.*?</iq>' `
+                -Description 'XEP-0077 refusal'
+            if ($registrationResponse -notmatch '<iq\b[^>]*\btype=[''"]error[''"]' -or
+                $registrationResponse -notmatch '<(?:service-unavailable|forbidden|not-allowed)\b') {
+                Add-Failure 'Public XEP-0077 registration was not refused with a protocol error.'
+            }
+        }
+        catch {
+            if ($_.Exception.Message -notmatch '(?i)(closed|end of stream|EOF)') {
+                throw
+            }
         }
     }
     catch {
@@ -416,7 +429,9 @@ $httpsChecks = @(
     [pscustomobject]@{ Method = 'GET'; Path = '/.well-known/host-meta.json'; Status = 200 },
     [pscustomobject]@{ Method = 'OPTIONS'; Path = '/http-bind'; Status = 200 },
     [pscustomobject]@{ Method = 'OPTIONS'; Path = '/maer-pairing/v1/sessions'; Status = 204 },
-    [pscustomobject]@{ Method = 'OPTIONS'; Path = '/upload'; Status = 200 }
+    # mod_http_upload only serves tokenized slot URLs. The bare route must not
+    # expose a directory or accept uploads without a slot negotiated over XMPP.
+    [pscustomobject]@{ Method = 'OPTIONS'; Path = '/upload'; Status = 404 }
 )
 
 foreach ($check in $httpsChecks) {
