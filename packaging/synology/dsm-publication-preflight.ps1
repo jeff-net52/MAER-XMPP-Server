@@ -325,33 +325,39 @@ function Test-RetiredDomainAbsent {
         return
     }
 
-    try {
-        $retiredAddresses = @([System.Net.Dns]::GetHostAddresses($RetiredDomain))
-        if ($retiredAddresses.Count -gt 0) {
-            Add-Failure "Retired domain still resolves publicly: $RetiredDomain"
-        }
-    }
-    catch {
-        # NXDOMAIN is the required state.
-    }
-
+    $publicRetiredAddresses = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase)
     if (Get-Command Resolve-DnsName -ErrorAction SilentlyContinue) {
-        foreach ($retiredName in @($RetiredDomain, "_xmpp-client._tcp.$RetiredDomain", "_xmpp-server._tcp.$RetiredDomain")) {
-            try {
-                $records = @(Resolve-DnsName -Name $retiredName -DnsOnly -ErrorAction Stop)
-                if ($records.Count -gt 0) {
-                    Add-Failure "Retired DNS name still has public records: $retiredName"
+        # Query independent public resolvers directly. The system resolver (often
+        # the NAS/router) can legitimately retain the removed record until its TTL
+        # expires and must not turn successful public retirement into a false alarm.
+        foreach ($resolver in @('1.1.1.1', '8.8.8.8')) {
+            foreach ($retiredName in @($RetiredDomain, "_xmpp-client._tcp.$RetiredDomain", "_xmpp-server._tcp.$RetiredDomain")) {
+                try {
+                    $records = @(Resolve-DnsName -Name $retiredName -Server $resolver -DnsOnly -ErrorAction Stop)
+                    if ($records.Count -gt 0) {
+                        Add-Failure "Retired DNS name still has public records through ${resolver}: $retiredName"
+                        if ($retiredName -eq $RetiredDomain) {
+                            foreach ($record in $records) {
+                                if ($record.IPAddress) {
+                                    $publicRetiredAddresses.Add([string]$record.IPAddress) | Out-Null
+                                }
+                            }
+                        }
+                    }
+                }
+                catch {
+                    # NXDOMAIN/no records is expected.
                 }
             }
-            catch {
-                # NXDOMAIN/no records is expected.
-            }
         }
     }
 
-    foreach ($retiredPort in @(80, 443, 5222, 5269)) {
-        if (Test-TcpPort -HostName $RetiredDomain -Port $retiredPort) {
-            Add-Failure "Retired domain still exposes TCP port $retiredPort."
+    foreach ($retiredAddress in $publicRetiredAddresses) {
+        foreach ($retiredPort in @(80, 443, 5222, 5269)) {
+            if (Test-TcpPort -HostName $retiredAddress -Port $retiredPort) {
+                Add-Failure "Retired domain still exposes TCP port $retiredPort through $retiredAddress."
+            }
         }
     }
 }
