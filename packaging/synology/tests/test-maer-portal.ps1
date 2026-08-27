@@ -64,7 +64,16 @@ Require ($portal.Contains('/account/assets/logo.png')) 'Existing MAER logo is no
 Require ($smtp.Contains('{verify, verify_peer}')) 'SMTP TLS peer verification is missing.'
 Require ($smtp.Contains('pkix_verify_hostname_match_fun(https)')) 'SMTP hostname verification is missing.'
 Require ($smtp.Contains("{versions, ['tlsv1.2', 'tlsv1.3']}")) 'SMTP permits an obsolete TLS protocol.'
-Require ($smtp.Contains('(Mode band 8#027) =:= 0')) 'SMTP password-file permissions are not fail-closed.'
+Require ($smtp.Contains('(Mode band 8#7777) =:= 8#600')) 'SMTP password-file permissions are not restricted to exact POSIX mode 0600.'
+Require (-not ($smtp.Contains('(Mode band 8#027) =:= 0'))) 'SMTP password-file validation still permits group-readable mode 0640.'
+foreach ($permissionTest in @(
+    'password_file_mode_0600_is_accepted_test',
+    'password_file_mode_0640_is_rejected_test',
+    'password_file_mode_0644_is_rejected_test',
+    'password_file_symlink_is_rejected_test'
+)) {
+    Require ($smtp.Contains($permissionTest)) "SMTP password-file permission test is missing: $permissionTest"
+}
 Require (-not ($smtp -match '(?i)logger|error_logger|io:format')) 'SMTP transport may log credentials or message tokens.'
 
 Require ($config -match '(?m)^\s+/account: mod_maer_portal$') 'Portal is not mounted on the public TLS listener.'

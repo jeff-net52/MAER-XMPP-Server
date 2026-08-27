@@ -852,6 +852,16 @@ Assert-True ($portalSourceText.Contains('; Secure; HttpOnly; SameSite=Strict')) 
 Assert-True ($portalSourceText.Contains('<<Base/binary, "/", Suffix/binary, "#", Token/binary>>')) 'Portal email tokens must remain outside HTTP request logs in URL fragments.'
 Assert-True ($portalSmtpSourceText.Contains('{verify, verify_peer}')) 'Portal SMTP transport must verify its TLS peer.'
 Assert-True ($portalSmtpSourceText.Contains('pkix_verify_hostname_match_fun(https)')) 'Portal SMTP transport must verify the server hostname.'
+Assert-True ($portalSmtpSourceText.Contains('(Mode band 8#7777) =:= 8#600')) 'Portal SMTP secret must require exact POSIX mode 0600 while ignoring file-type bits.'
+Assert-True (-not ($portalSmtpSourceText.Contains('(Mode band 8#027) =:= 0'))) 'Portal SMTP secret validation must reject group-readable mode 0640.'
+foreach ($permissionTest in @(
+    'password_file_mode_0600_is_accepted_test',
+    'password_file_mode_0640_is_rejected_test',
+    'password_file_mode_0644_is_rejected_test',
+    'password_file_symlink_is_rejected_test'
+)) {
+    Assert-True ($portalSmtpSourceText.Contains($permissionTest)) "Portal SMTP permission test is missing: $permissionTest"
+}
 Assert-True (-not ($portalSourceText -match 'ejabberd_web_admin\s*:|-include\([^\n]*web_admin')) 'Portal must remain independent from the WebAdmin implementation.'
 Assert-True ($pairingSourceText.Contains('xmpp:err_policy_violation()')) 'Pairing throttling must use policy-violation in the locked source.'
 Assert-True ($pairingSourceText.Contains('xmpp:err_resource_constraint()')) 'The device cap must retain resource-constraint in the locked source.'

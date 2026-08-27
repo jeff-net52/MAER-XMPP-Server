@@ -99,16 +99,20 @@ no_control_chars(Value) ->
 read_password(Path) when is_binary(Path), byte_size(Path) =< 4096 ->
     File = binary_to_list(Path),
     case file:read_link_info(File) of
-        {ok, #file_info{type = regular, mode = Mode, size = Size}}
-          when Size > 0, Size =< 4096, (Mode band 8#027) =:= 0 ->
-            case file:read_file(File) of
-                {ok, Raw} ->
-                    Password = strip_one_line_ending(Raw),
-                    case Password =/= <<>> andalso no_control_chars(Password) of
-                        true -> {ok, Password};
-                        false -> error
+        {ok, Info} ->
+            case password_file_info_available(Info) of
+                true ->
+                    case file:read_file(File) of
+                        {ok, Raw} ->
+                            Password = strip_one_line_ending(Raw),
+                            case Password =/= <<>> andalso
+                                 no_control_chars(Password) of
+                                true -> {ok, Password};
+                                false -> error
+                            end;
+                        _ -> error
                     end;
-                _ -> error
+                false -> error
             end;
         _ -> error
     end;
@@ -116,11 +120,16 @@ read_password(_) -> error.
 
 password_file_available(Path) when is_binary(Path), byte_size(Path) =< 4096 ->
     case file:read_link_info(binary_to_list(Path)) of
-        {ok, #file_info{type = regular, mode = Mode, size = Size}} ->
-            Size > 0 andalso Size =< 4096 andalso (Mode band 8#027) =:= 0;
+        {ok, Info} -> password_file_info_available(Info);
         _ -> false
     end;
 password_file_available(_) -> false.
+
+password_file_info_available(
+  #file_info{type = regular, mode = Mode, size = Size}) ->
+    Size > 0 andalso Size =< 4096 andalso
+    (Mode band 8#7777) =:= 8#600;
+password_file_info_available(_) -> false.
 
 strip_one_line_ending(Value) ->
     Size = byte_size(Value),
@@ -284,5 +293,21 @@ missing_password_file_is_not_configured_test() ->
              smtp_password_file => <<"/definitely/missing/maer-smtp-password">>,
              smtp_from => <<"sender@example.org">>, smtp_timeout => 10000},
     ?assertNot(configured(Opts)).
+
+password_file_mode_0600_is_accepted_test() ->
+    ?assert(password_file_info_available(
+              #file_info{type = regular, mode = 8#100600, size = 32})).
+
+password_file_mode_0640_is_rejected_test() ->
+    ?assertNot(password_file_info_available(
+                 #file_info{type = regular, mode = 8#100640, size = 32})).
+
+password_file_mode_0644_is_rejected_test() ->
+    ?assertNot(password_file_info_available(
+                 #file_info{type = regular, mode = 8#100644, size = 32})).
+
+password_file_symlink_is_rejected_test() ->
+    ?assertNot(password_file_info_available(
+                 #file_info{type = symlink, mode = 8#120600, size = 32})).
 
 -endif.
