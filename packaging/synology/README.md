@@ -10,7 +10,7 @@ sur un NAS.
 |---|---|
 | Identifiant | `maerxmppserver` |
 | Nom affiché | `MAER XMPP Server` |
-| Version SPK | `26.07.0-6` |
+| Version SPK | `26.07.0-7` |
 | Architecture | `armada38x` uniquement |
 | DSM minimal | `7.2-72806` |
 | Compte de service | `sc-maerxmppserver`, jamais `root` |
@@ -259,7 +259,7 @@ make -C spk/maerxmppserver arch-armada38x-7.1
 ```
 
 Le SPK attendu est alors
-`packages/maerxmppserver_armada38x-7.1_26.07.0-6.spk`, à la racine du checkout
+`packages/maerxmppserver_armada38x-7.1_26.07.0-7.spk`, à la racine du checkout
 `spksrc`.
 
 Une seconde exécution de la même commande réassemble le paquet. Son SHA-256
@@ -270,7 +270,7 @@ Après le build, valider le SPK réel, y compris `INFO`, `conf/privilege` et les
 modes des scripts :
 
 ```powershell
-pwsh -NoProfile -File packaging/synology/tests/validate-source.ps1 -SpkPath /chemin/vers/maerxmppserver_armada38x-7.1_26.07.0-6.spk
+pwsh -NoProfile -File packaging/synology/tests/validate-source.ps1 -SpkPath /chemin/vers/maerxmppserver_armada38x-7.1_26.07.0-7.spk
 ```
 
 Le choix `--disable-year2038` est intentionnel pour ce premier essai 32 bits
@@ -300,7 +300,7 @@ Seuls les reverse proxies loopback `127.0.0.0/8` et `::1/128` sont déclarés
 fiables pour `X-Forwarded-For`; la valeur `all` est interdite. La règle DSM doit
 remplacer l'en-tête reçu du client, jamais lui ajouter une valeur. Les ports
 EPMD 4369, distribution Erlang 5211, S2S 5269, administration 5280 et backend
-HTTPS 5443 doivent tous rester inaccessibles depuis Internet.
+HTTP 5080 et HTTPS 5443 doivent tous rester inaccessibles depuis Internet.
 
 Les réglages DNS, SRV, pare-feu et reverse proxy à appliquer sont décrits dans
 [`PUBLICATION-PREFLIGHT.md`](PUBLICATION-PREFLIGHT.md). Après installation et

@@ -420,7 +420,7 @@ foreach ($requiredPort in @(443, 5222)) {
         Add-Failure "Required public TCP port is closed: $requiredPort"
     }
 }
-foreach ($privatePort in @(4369, 5211, 5269, 5280, 5443)) {
+foreach ($privatePort in @(4369, 5080, 5211, 5269, 5280, 5443)) {
     if (Test-TcpPort -HostName $Domain -Port $privatePort) {
         Add-Failure "Private TCP port must not be public: $privatePort"
     }

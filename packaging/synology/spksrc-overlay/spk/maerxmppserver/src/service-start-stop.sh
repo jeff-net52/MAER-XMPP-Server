@@ -64,7 +64,7 @@ assert_ports_available()
         *) fail "unrecognized TCP listener output; refusing to start" ;;
     esac
 
-    for service_port in 5211 5222 5280 5443
+    for service_port in 5080 5211 5222 5280 5443
     do
         if printf '%s\n' "${listeners}" | awk -v port="${service_port}" '
             NR > 1 {

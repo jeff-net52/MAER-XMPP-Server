@@ -83,6 +83,12 @@ listen:
     request_handlers:
       /admin: ejabberd_web_admin
   -
+    port: 5080
+    ip: 127.0.0.1
+    module: ejabberd_http
+    request_handlers:
+      /: mod_maer_redirect
+  -
     port: 5443
     ip: 127.0.0.1
     module: ejabberd_http

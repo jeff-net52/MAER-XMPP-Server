@@ -184,6 +184,7 @@ function Validate-BuiltSpk {
                 'lib/libncursesw.so.6.6',
                 'lib/libatomic.so.1.2.0',
                 'lib/ejabberd-26.07/ebin/mod_maer_pairing.beam',
+                'lib/ejabberd-26.07/ebin/mod_maer_redirect.beam',
                 'share/maerxmppserver/defaults/ejabberd.yml',
                 'share/maerxmppserver/defaults/ejabberdctl.cfg',
                 'share/maerxmppserver/defaults/inetrc',
@@ -624,6 +625,7 @@ Assert-True (-not ($configText -match '(?m)^\s+mod_register:')) 'Public in-band 
 Assert-True (-not ($configText -match '(?m)^\s+mod_http_api:')) 'HTTP administration API must remain disabled.'
 Assert-True (-not ($configText -match '(?m)^\s+mod_stun_disco:')) 'TURN discovery must remain disabled until secret provisioning exists.'
 Assert-True ($configText -match '(?ms)^\s+port: 5280\n\s+ip: 127\.0\.0\.1\n\s+module: ejabberd_http\n\s+request_handlers:\n\s+/admin: ejabberd_web_admin$') 'Administration listener must remain loopback-only.'
+Assert-True ($configText -match '(?ms)^\s+port: 5080\n\s+ip: 127\.0\.0\.1\n\s+module: ejabberd_http\n\s+request_handlers:\n\s+/: mod_maer_redirect$') 'HTTP redirect listener must remain dedicated and loopback-only.'
 Assert-True ($configText -match '(?ms)^\s+port: 5443\n\s+ip: 127\.0\.0\.1\n\s+module: ejabberd_http\n\s+tls: true$') 'HTTPS protocol backend must remain TLS and loopback-only.'
 Assert-True ($configText -match '(?m)^\s+ciphers: "HIGH:!aNULL:!eNULL:!3DES:!RC4:!MD5:!PSK:!SRP:@STRENGTH"$') 'HTTPS protocol backend must use the hardened cipher profile.'
 Assert-True ($configText -match '(?m)^\s+tls_compression: false$') 'HTTPS protocol backend must disable TLS compression.'
@@ -645,14 +647,15 @@ Assert-True ($configText -match '(?ms)^  mod_http_upload_quota:\n    access_soft
 Assert-True ($configText.Contains('/usr/local/etc/certificate/maerxmppserver/maerxmppserver_client/xmpp.pem')) 'Canonical root-managed certificate path is missing.'
 Assert-True ($configText.Contains('/var/packages/maerxmppserver/var/data/ejabberd.sqlite')) 'Canonical SQLite path is missing.'
 Assert-True ($firewallText -match '(?m)^dst\.ports="5222/tcp"$') 'DSM firewall profile must publish XMPP client port 5222.'
-Assert-True (-not ($firewallText -match '(?m)^dst\.ports="[^"]*(?:5269|5280|5443)')) 'DSM firewall profile must not publish S2S, administration, or HTTPS backend ports.'
+Assert-True (-not ($firewallText -match '(?m)^dst\.ports="[^"]*(?:5080|5269|5280|5443)')) 'DSM firewall profile must not publish redirect, S2S, administration, or HTTPS backend ports.'
 Assert-True ($attributesText -match '(?m)^\* text=auto eol=lf$') 'Git must default detected text files to LF.'
 Assert-True ($attributesText -match '(?m)^COPYING text eol=lf$') 'Canonical COPYING must have an explicit LF contract.'
 Assert-True ($publicationGuideText.Contains('xmpp.maer.fr:443')) 'DSM publication guide must document the public 443 topology.'
 Assert-True ($publicationGuideText.Contains('127.0.0.1:5443')) 'DSM publication guide must document the loopback HTTPS backend.'
+Assert-True ($publicationGuideText.Contains('127.0.0.1:5080')) 'DSM publication guide must document the loopback HTTP redirect backend.'
 Assert-True ($publicationGuideText.Contains('_xmpp-client._tcp.xmpp.maer.fr')) 'DSM publication guide must document the client SRV record.'
 Assert-True ($publicationPreflightText.Contains('"_xmpp-client._tcp.$Domain"')) 'DSM preflight must verify the client SRV record.'
-Assert-True ($publicationPreflightText -match 'privatePort in @\(4369, 5211, 5269, 5280, 5443\)') 'DSM preflight must verify all private Erlang, S2S, admin, and backend ports remain closed.'
+Assert-True ($publicationPreflightText -match 'privatePort in @\(4369, 5080, 5211, 5269, 5280, 5443\)') 'DSM preflight must verify all private redirect, Erlang, S2S, admin, and backend ports remain closed.'
 Assert-True ($publicationPreflightText.Contains("@('/admin/', '/api')")) 'DSM preflight must prove the administration and API routes are absent.'
 Assert-True ($publicationPreflightText.Contains('Test-XmppStartTls')) 'DSM preflight must verify XMPP STARTTLS and SASL at runtime.'
 Assert-True ($publicationPreflightText.Contains('Test-ObsoleteTlsRejection')) 'DSM preflight must reject TLS 1.0 and TLS 1.1 explicitly.'
@@ -660,6 +663,7 @@ Assert-True ($publicationPreflightText.Contains('$RetiredDomain')) 'DSM prefligh
 Assert-True ($publicationPreflightText.Contains('https://untrusted.invalid')) 'DSM preflight must reject a hostile WebSocket origin.'
 Assert-True ($workflowText -match 'uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683') 'GitHub checkout action must be pinned to the immutable v4.2.2 commit.'
 Assert-Equal ([regex]::Matches($workflowText, '(?m)^\s+- src/mod_maer_pairing\.erl$').Count) 2 'Pairing source changes must trigger both push and pull-request package validation.'
+Assert-Equal ([regex]::Matches($workflowText, '(?m)^\s+- src/mod_maer_redirect\.erl$').Count) 2 'Redirect source changes must trigger both push and pull-request package validation.'
 Assert-True ($controlConfigText -match '(?m)^ERL_DIST_PORT=5211$') 'Fixed Erlang distribution port is missing.'
 Assert-True ($controlConfigText -match '(?m)^INET_DIST_INTERFACE=127\.0\.0\.1$') 'Erlang distribution must bind to loopback.'
 
@@ -670,7 +674,7 @@ Assert-True (-not ($runtimePayload -match $forbiddenMarkers)) 'Runtime payload c
 Assert-True (-not ($runtimePayload -match '(?im)^\s*(password|secret|external_secret)\s*:')) 'Runtime profile contains a secret-bearing YAML key.'
 Assert-True ($serviceScriptText.StartsWith("#!/bin/sh`n")) 'start-stop-status must use /bin/sh with LF endings.'
 Assert-True ($serviceScriptText -match '(?m)^set -eu$') 'start-stop-status must enable fail-fast shell behavior.'
-Assert-True ($serviceScriptText -match 'for service_port in 5211 5222 5280 5443') 'Port collision gate is incomplete.'
+Assert-True ($serviceScriptText -match 'for service_port in 5080 5211 5222 5280 5443') 'Port collision gate is incomplete.'
 Assert-True ($serviceScriptText -match 'cannot inspect TCP listeners; refusing to start') 'Port inspection must fail closed.'
 Assert-True ($serviceScriptText -match '^check_config\(\)' -or $serviceScriptText -match '(?m)^check_config\(\)$') 'Configuration check function is missing.'
 Assert-True ($serviceScriptText -match 'application:ensure_all_started\(xmpp\)') 'Configuration validation must start xmpp so the JID NIF is loaded.'
@@ -707,6 +711,9 @@ Assert-True ($certificateInstallerText.Contains('/usr/local/libexec/maerxmppserv
 Assert-True ($certificateInstallerText.Contains('trap cleanup EXIT') -and $certificateInstallerText.Contains('exit 129') -and $certificateInstallerText.Contains('exit 130') -and $certificateInstallerText.Contains('exit 143')) 'Certificate installer signal traps must terminate explicitly.'
 $bootstrapAdminText = Read-TextNormalized $bootstrapAdminPath
 $pairingSourceText = Read-TextNormalized (Join-Path $repositoryRoot 'src\mod_maer_pairing.erl')
+$redirectSourceText = Read-TextNormalized (Join-Path $repositoryRoot 'src\mod_maer_redirect.erl')
+Assert-True ($redirectSourceText.Contains('{308,')) 'HTTP redirect handler must use a permanent 308 response.'
+Assert-True ($redirectSourceText.Contains('https://xmpp.maer.fr/')) 'HTTP redirect handler must use the canonical HTTPS origin.'
 Assert-True ($pairingSourceText.Contains('User = <<"admin">>')) 'Bootstrap transaction must create only the ACL-authorized admin localpart.'
 Assert-True ($pairingSourceText.Contains('verify_existing_admin(User, Host, Password)')) 'Bootstrap transaction must safely reconcile an existing admin with the same password.'
 Assert-True ($bootstrapAdminText.Contains('pong = net_adm:ping(N)')) 'Bootstrap must prove distribution connectivity before authentication RPCs.'

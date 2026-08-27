@@ -1,9 +1,10 @@
 # Préflight de publication DSM
 
 Ce profil publie un seul domaine, `xmpp.maer.fr`. Le paquet écoute XMPP sur
-`0.0.0.0:5222`, l'administration sur `127.0.0.1:5280` et les transports HTTPS
-sur `127.0.0.1:5443`. Le port 5443 est un backend local : il ne doit être ni
-ouvert dans le pare-feu DSM, ni redirigé par le routeur.
+`0.0.0.0:5222`, la redirection HTTP sur `127.0.0.1:5080`, l'administration sur
+`127.0.0.1:5280` et les transports HTTPS sur `127.0.0.1:5443`. Les ports 5080
+et 5443 sont des backends locaux : ils ne doivent être ni ouverts dans le
+pare-feu DSM, ni redirigés directement par le routeur.
 
 ## DNS public
 
@@ -26,6 +27,10 @@ xmpp.maer.fr`, accepter WebSocket et ne publier que ces préfixes :
 - `/xmpp-websocket` ;
 - `/upload` ;
 - `/maer-pairing`.
+
+Créer également une règle HTTP publique sur `xmpp.maer.fr:80` vers
+`http://127.0.0.1:5080`. Ce backend dédié ne sert aucun contenu : il répond
+uniquement `308 Location: https://xmpp.maer.fr/`.
 
 Ne jamais publier `/admin`, `/api` ou le port 5280. Remplacer les en-têtes
 d'adresse client à l'entrée du proxy au lieu de concaténer une valeur fournie
@@ -55,10 +60,10 @@ Le serveur vérifie en plus l'en-tête de poignée de main WebSocket avec
 doit recevoir un refus 403 ; les clients natifs sans en-tête `Origin` restent
 acceptés par ejabberd.
 
-Le port 80 doit être fermé ou rediriger en 301/308 vers HTTPS, à l'exception
-éventuelle d'un chemin ACME strictement borné. Le pare-feu et la redirection NAT
-doivent exposer uniquement 443 et 5222 pour ce service. Les ports 5269, 5280 et
-5443 restent inaccessibles depuis Internet. EPMD 4369 et le port fixe de
+Le port 80 doit rediriger en 301/308 vers HTTPS, à l'exception éventuelle d'un
+chemin ACME strictement borné. Le pare-feu et la redirection NAT doivent exposer
+uniquement 80, 443 et 5222 pour ce service. Les ports 5080, 5269, 5280 et 5443
+restent inaccessibles depuis Internet. EPMD 4369 et le port fixe de
 distribution Erlang 5211 sont également privés. TLS 1.0 et TLS 1.1 doivent être
 refusés sur HTTPS 443 comme après STARTTLS sur XMPP 5222.
 
