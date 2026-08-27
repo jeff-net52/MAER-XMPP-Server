@@ -199,6 +199,8 @@ function Validate-BuiltSpk {
                 'lib/ejabberd-26.07/ebin/mod_maer_redirect.beam',
                 'lib/ejabberd-26.07/priv/maer_portal/portal.css',
                 'lib/ejabberd-26.07/priv/maer_portal/portal.js',
+                'lib/ejabberd-26.07/priv/img/admin-logo.png',
+                'lib/ejabberd-26.07/priv/img/favicon.png',
                 'share/maerxmppserver/defaults/ejabberd.yml',
                 'share/maerxmppserver/defaults/ejabberdctl.cfg',
                 'share/maerxmppserver/defaults/inetrc',
@@ -249,6 +251,20 @@ function Validate-BuiltSpk {
                 $uploadMonitorLine = $payloadModeListing | Where-Object { $_ -match '(?:^|\s)(?:\./)?bin/maer-upload-usage-check$' } | Select-Object -First 1
                 Assert-True ([bool]$uploadMonitorLine) 'SPK payload listing has no upload usage monitor.'
                 if ($uploadMonitorLine) { Assert-True ($uploadMonitorLine -match '^-rwxr-xr-x\s') 'Upload usage monitor mode must be 0755.' }
+                foreach ($runtimeWebAsset in @(
+                    'lib/ejabberd-26.07/priv/maer_portal/portal.css',
+                    'lib/ejabberd-26.07/priv/maer_portal/portal.js',
+                    'lib/ejabberd-26.07/priv/img/admin-logo.png',
+                    'lib/ejabberd-26.07/priv/img/favicon.png'
+                )) {
+                    $runtimeWebAssetLine = $payloadModeListing |
+                        Where-Object { $_ -match ('(?:^|\s)(?:\./)?' + [regex]::Escape($runtimeWebAsset) + '$') } |
+                        Select-Object -First 1
+                    Assert-True ([bool]$runtimeWebAssetLine) "SPK payload listing has no MAER runtime web asset: $runtimeWebAsset"
+                    if ($runtimeWebAssetLine) {
+                        Assert-True ($runtimeWebAssetLine -match '^-rw-r--r--\s') "MAER runtime web asset must have mode 0644: $runtimeWebAsset"
+                    }
+                }
                 foreach ($entry in $payloadModeListing) {
                     if ($entry -notmatch '^(?<mode>\S{10})\s') {
                         continue
@@ -300,6 +316,36 @@ function Validate-BuiltSpk {
                     $embeddedConfigHash = (Get-FileHash -LiteralPath $embeddedConfigPath -Algorithm SHA256).Hash
                     $sourceConfigHash = (Get-FileHash -LiteralPath $sourceConfigPath -Algorithm SHA256).Hash
                     Assert-Equal $embeddedConfigHash $sourceConfigHash 'SPK embedded configuration differs from the validated source profile.'
+                }
+
+                foreach ($runtimeWebAsset in @(
+                    [pscustomobject]@{
+                        Payload = 'lib\ejabberd-26.07\priv\maer_portal\portal.css'
+                        Source = 'priv\maer_portal\portal.css'
+                    },
+                    [pscustomobject]@{
+                        Payload = 'lib\ejabberd-26.07\priv\maer_portal\portal.js'
+                        Source = 'priv\maer_portal\portal.js'
+                    },
+                    [pscustomobject]@{
+                        Payload = 'lib\ejabberd-26.07\priv\img\admin-logo.png'
+                        Source = 'maer\assets\maer-mark.png'
+                    },
+                    [pscustomobject]@{
+                        Payload = 'lib\ejabberd-26.07\priv\img\favicon.png'
+                        Source = 'maer\assets\maer-mark.png'
+                    }
+                )) {
+                    $embeddedAssetPath = Join-Path $payloadRoot $runtimeWebAsset.Payload
+                    $reviewedAssetPath = Join-Path $repositoryRoot $runtimeWebAsset.Source
+                    Assert-True (Test-Path -LiteralPath $embeddedAssetPath -PathType Leaf) "SPK payload has no reviewed MAER web asset: $($runtimeWebAsset.Payload)"
+                    Assert-True (Test-Path -LiteralPath $reviewedAssetPath -PathType Leaf) "Reviewed MAER web asset source is missing: $($runtimeWebAsset.Source)"
+                    if ((Test-Path -LiteralPath $embeddedAssetPath -PathType Leaf) -and
+                        (Test-Path -LiteralPath $reviewedAssetPath -PathType Leaf)) {
+                        $embeddedAssetHash = (Get-FileHash -LiteralPath $embeddedAssetPath -Algorithm SHA256).Hash
+                        $reviewedAssetHash = (Get-FileHash -LiteralPath $reviewedAssetPath -Algorithm SHA256).Hash
+                        Assert-Equal $embeddedAssetHash $reviewedAssetHash "SPK MAER web asset differs from its reviewed source: $($runtimeWebAsset.Payload)"
+                    }
                 }
 
                 $installedApplicationsPath = Join-Path $payloadRoot 'lib\erlang\releases\27\installed_application_versions'
@@ -416,11 +462,26 @@ Assert-True ($spkMakefile -match '(?m)^\s*chmod 755 \$\(STAGING_DIR\)/bin/ejabbe
 Assert-Equal (Get-MakeValue $spkMakefile 'POST_STRIP_TARGET') 'maerxmppserver_runtime_finalize' 'Runtime hardening must run after the standard strip phase.'
 Assert-Equal (Get-MakeValue $spkMakefile 'POST_SERVICE_TARGET') 'maerxmppserver_service_finalize' 'DSM service script modes must be finalized before outer packaging.'
 Assert-Equal (Get-MakeValue $spkMakefile 'RUNTIME_RPATH') '/var/packages/maerxmppserver/target/lib' 'Runtime RPATH must use only the canonical package library path.'
+Assert-Equal (Get-MakeValue $spkMakefile 'MAER_SERVER_COMMIT') $locks.maer_xmpp_server.commit 'SPK runtime asset source must use the immutable MAER server commit.'
+Assert-Equal (Get-MakeValue $spkMakefile 'MAER_SERVER_SOURCE_DIR') '$(WORK_DIR)/MAER-XMPP-Server-$(MAER_SERVER_COMMIT)' 'SPK runtime assets must come from the patched source tree in the active SPK work directory.'
+Assert-Equal (Get-MakeValue $spkMakefile 'MAER_EJABBERD_RUNTIME_DIR') '$(STAGING_DIR)/lib/ejabberd-26.07' 'MAER web assets must target the exact ejabberd runtime directory.'
+Assert-Equal (Get-MakeValue $spkMakefile 'MAER_PORTAL_RUNTIME_DIR') '$(MAER_EJABBERD_RUNTIME_DIR)/priv/maer_portal' 'Portal assets must target the exact runtime priv directory.'
+Assert-Equal (Get-MakeValue $spkMakefile 'MAER_WEBADMIN_IMAGE_RUNTIME_DIR') '$(MAER_EJABBERD_RUNTIME_DIR)/priv/img' 'MAER image assets must target the exact runtime image directory.'
 Assert-Equal (Get-MakeValue $spkMakefile 'MAER_SOURCE_DATE_EPOCH') '1785110400' 'SPK archive timestamp must be pinned to the package release date.'
 Assert-Equal (Get-MakeValue $spkMakefile 'MAER_REPRODUCIBLE_TAR_OPTIONS') '--sort=name --mtime=@$(MAER_SOURCE_DATE_EPOCH) --owner=0 --group=0 --numeric-owner' 'SPK archives must use stable ordering, mtimes, and numeric ownership.'
 Assert-True ($spkMakefile -match '(?m)^\$\(SPK_FILE_NAME\): export TAR_OPTIONS = \$\(MAER_REPRODUCIBLE_TAR_OPTIONS\)$') 'Reproducible tar options must be scoped to both SPK archive layers.'
 Assert-True ($spkMakefile -match '(?m)^\$\(SPK_FILE_NAME\): export GZIP = -n$') 'The package.tgz gzip header must omit build-time metadata.'
 Assert-True ($spkMakefile -match '(?m)^\s*install -m 755 src/upload-usage-check\.sh \$\(STAGING_DIR\)/bin/maer-upload-usage-check$') 'Global upload usage monitor must be installed as an executable.'
+Assert-True ($spkMakefile.Contains('install -m 755 -d $(MAER_PORTAL_RUNTIME_DIR) $(MAER_WEBADMIN_IMAGE_RUNTIME_DIR)')) 'SPK copy target must create only the reviewed MAER runtime asset directories with mode 0755.'
+foreach ($runtimeAssetInstall in @(
+    'install -m 644 $(MAER_SERVER_SOURCE_DIR)/priv/maer_portal/portal.css $(MAER_PORTAL_RUNTIME_DIR)/portal.css',
+    'install -m 644 $(MAER_SERVER_SOURCE_DIR)/priv/maer_portal/portal.js $(MAER_PORTAL_RUNTIME_DIR)/portal.js',
+    'install -m 644 $(MAER_SERVER_SOURCE_DIR)/maer/assets/maer-mark.png $(MAER_WEBADMIN_IMAGE_RUNTIME_DIR)/admin-logo.png',
+    'install -m 644 $(MAER_SERVER_SOURCE_DIR)/maer/assets/maer-mark.png $(MAER_WEBADMIN_IMAGE_RUNTIME_DIR)/favicon.png'
+)) {
+    Assert-True ($spkMakefile.Contains($runtimeAssetInstall)) "SPK copy target is missing an explicit mode-0644 runtime asset install: $runtimeAssetInstall"
+}
+Assert-True (-not ($spkMakefile -match '(?m)^\s*(?:cp|install).*\b(?:src|priv)/?\s+\$\(STAGING_DIR\)')) 'SPK copy target must never copy an entire source or priv directory into the runtime.'
 Assert-Equal (Get-MakeValue $spkMakefile 'GROUP') 'sc-maerxmppserver' 'Package must use its isolated service group.'
 Assert-True ($spkMakefile -match 'beam_lib:strip_files\(Files\)') 'Runtime finalization must strip reproducibility metadata from every BEAM file.'
 Assert-True ($spkMakefile -match 'patchelf --force-rpath --set-rpath "\$\(RUNTIME_RPATH\)"') 'Runtime finalization must canonicalize every dynamic ELF RPATH.'

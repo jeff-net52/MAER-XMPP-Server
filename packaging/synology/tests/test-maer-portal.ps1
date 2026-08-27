@@ -86,6 +86,16 @@ Require (-not ($config -match '(?ms)maer_fail2ban_exempt:.*?0\.0\.0\.0/0')) 'WAN
 foreach ($payload in @('mod_maer_portal.beam', 'maer_portal_smtp.beam', 'priv/maer_portal/portal.css', 'priv/maer_portal/portal.js')) {
     Require ($spkMakefile.Contains($payload)) "SPK payload assertion is missing: $payload"
 }
+foreach ($runtimeAssetInstall in @(
+    'install -m 644 $(MAER_SERVER_SOURCE_DIR)/priv/maer_portal/portal.css $(MAER_PORTAL_RUNTIME_DIR)/portal.css',
+    'install -m 644 $(MAER_SERVER_SOURCE_DIR)/priv/maer_portal/portal.js $(MAER_PORTAL_RUNTIME_DIR)/portal.js',
+    'install -m 644 $(MAER_SERVER_SOURCE_DIR)/maer/assets/maer-mark.png $(MAER_WEBADMIN_IMAGE_RUNTIME_DIR)/admin-logo.png',
+    'install -m 644 $(MAER_SERVER_SOURCE_DIR)/maer/assets/maer-mark.png $(MAER_WEBADMIN_IMAGE_RUNTIME_DIR)/favicon.png'
+)) {
+    Require ($spkMakefile.Contains($runtimeAssetInstall)) "SPK runtime asset install is missing or does not enforce mode 0644: $runtimeAssetInstall"
+}
+Require ($spkMakefile.Contains('cmp -s $(MAER_SERVER_SOURCE_DIR)/priv/maer_portal/portal.css $(MAER_PORTAL_RUNTIME_DIR)/portal.css')) 'SPK does not verify the installed portal stylesheet against its reviewed source.'
+Require ($spkMakefile.Contains('cmp -s $(MAER_SERVER_SOURCE_DIR)/priv/maer_portal/portal.js $(MAER_PORTAL_RUNTIME_DIR)/portal.js')) 'SPK does not verify the installed portal script against its reviewed source.'
 foreach ($patchedPath in @('src/mod_maer_portal.erl', 'src/maer_portal_smtp.erl', 'priv/maer_portal/portal.css', 'priv/maer_portal/portal.js')) {
     Require ($serverPatch.Contains("+++ $patchedPath")) "Locked source patch does not add $patchedPath with the spksrc patch -p0 path"
 }

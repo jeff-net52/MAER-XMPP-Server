@@ -43,6 +43,11 @@ NO_SERVICE_SHORTCUT = yes
 NATIVE_ERLANG_BIN_DIR = $(abspath $(WORK_DIR)/../../../native/erlang-maer/work-native/install/usr/local/bin)
 SPKSRC_BUILD_ROOT = $(abspath $(WORK_DIR)/../../..)
 RUNTIME_RPATH = /var/packages/maerxmppserver/target/lib
+MAER_SERVER_COMMIT = fea59faa0224c7a8f52751eed0bd4d21f55c8d93
+MAER_SERVER_SOURCE_DIR = $(WORK_DIR)/MAER-XMPP-Server-$(MAER_SERVER_COMMIT)
+MAER_EJABBERD_RUNTIME_DIR = $(STAGING_DIR)/lib/ejabberd-26.07
+MAER_PORTAL_RUNTIME_DIR = $(MAER_EJABBERD_RUNTIME_DIR)/priv/maer_portal
+MAER_WEBADMIN_IMAGE_RUNTIME_DIR = $(MAER_EJABBERD_RUNTIME_DIR)/priv/img
 OTP_DEVELOPMENT_APPLICATIONS = common_test dialyzer edoc erl_interface eunit
 SERVER_RUNTIME_APPLICATIONS = cache_tab eimp ejabberd erlydtl ezlib fast_tls fast_xml
 SERVER_RUNTIME_APPLICATIONS += fast_yaml idna jose luerl mqtree p1_acme p1_oauth2
@@ -71,12 +76,38 @@ maerxmppserver_copy_runtime: copy_target
 	install -m 755 $(STAGING_INSTALL_PREFIX)/bin/ejabberdctl $(STAGING_DIR)/bin/ejabberdctl
 	install -m 755 src/upload-usage-check.sh $(STAGING_DIR)/bin/maer-upload-usage-check
 	cp -a $(foreach application,$(SERVER_RUNTIME_APPLICATIONS),$(STAGING_INSTALL_PREFIX)/lib/$(application)-*) $(STAGING_DIR)/lib/
+	# ejabberd's upstream install target does not discover priv directories added
+	# by a downstream patch. Install only the reviewed runtime web assets from the
+	# immutable MAER source tree; never copy the surrounding source directory.
+	test -f $(MAER_SERVER_SOURCE_DIR)/priv/maer_portal/portal.css
+	test ! -L $(MAER_SERVER_SOURCE_DIR)/priv/maer_portal/portal.css
+	test -f $(MAER_SERVER_SOURCE_DIR)/priv/maer_portal/portal.js
+	test ! -L $(MAER_SERVER_SOURCE_DIR)/priv/maer_portal/portal.js
+	test -f $(MAER_SERVER_SOURCE_DIR)/maer/assets/maer-mark.png
+	test ! -L $(MAER_SERVER_SOURCE_DIR)/maer/assets/maer-mark.png
+	install -m 755 -d $(MAER_PORTAL_RUNTIME_DIR) $(MAER_WEBADMIN_IMAGE_RUNTIME_DIR)
+	install -m 644 $(MAER_SERVER_SOURCE_DIR)/priv/maer_portal/portal.css $(MAER_PORTAL_RUNTIME_DIR)/portal.css
+	install -m 644 $(MAER_SERVER_SOURCE_DIR)/priv/maer_portal/portal.js $(MAER_PORTAL_RUNTIME_DIR)/portal.js
+	install -m 644 $(MAER_SERVER_SOURCE_DIR)/maer/assets/maer-mark.png $(MAER_WEBADMIN_IMAGE_RUNTIME_DIR)/admin-logo.png
+	install -m 644 $(MAER_SERVER_SOURCE_DIR)/maer/assets/maer-mark.png $(MAER_WEBADMIN_IMAGE_RUNTIME_DIR)/favicon.png
+	cmp -s $(MAER_SERVER_SOURCE_DIR)/priv/maer_portal/portal.css $(MAER_PORTAL_RUNTIME_DIR)/portal.css
+	cmp -s $(MAER_SERVER_SOURCE_DIR)/priv/maer_portal/portal.js $(MAER_PORTAL_RUNTIME_DIR)/portal.js
+	cmp -s $(MAER_SERVER_SOURCE_DIR)/maer/assets/maer-mark.png $(MAER_WEBADMIN_IMAGE_RUNTIME_DIR)/admin-logo.png
+	cmp -s $(MAER_SERVER_SOURCE_DIR)/maer/assets/maer-mark.png $(MAER_WEBADMIN_IMAGE_RUNTIME_DIR)/favicon.png
+	test "$$(stat -c '%a' $(MAER_PORTAL_RUNTIME_DIR))" = 755
+	test "$$(stat -c '%a' $(MAER_WEBADMIN_IMAGE_RUNTIME_DIR))" = 755
+	test "$$(stat -c '%a' $(MAER_PORTAL_RUNTIME_DIR)/portal.css)" = 644
+	test "$$(stat -c '%a' $(MAER_PORTAL_RUNTIME_DIR)/portal.js)" = 644
+	test "$$(stat -c '%a' $(MAER_WEBADMIN_IMAGE_RUNTIME_DIR)/admin-logo.png)" = 644
+	test "$$(stat -c '%a' $(MAER_WEBADMIN_IMAGE_RUNTIME_DIR)/favicon.png)" = 644
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/ebin/mod_maer_pairing.beam
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/ebin/mod_maer_portal.beam
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/ebin/maer_portal_smtp.beam
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/ebin/mod_maer_redirect.beam
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/priv/maer_portal/portal.css
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/priv/maer_portal/portal.js
+	test -f $(STAGING_DIR)/lib/ejabberd-26.07/priv/img/admin-logo.png
+	test -f $(STAGING_DIR)/lib/ejabberd-26.07/priv/img/favicon.png
 
 .PHONY: maerxmppserver_service_finalize
 maerxmppserver_service_finalize:
@@ -161,6 +192,12 @@ maerxmppserver_runtime_finalize:
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/ebin/mod_maer_redirect.beam
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/priv/maer_portal/portal.css
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/priv/maer_portal/portal.js
+	test -f $(STAGING_DIR)/lib/ejabberd-26.07/priv/img/admin-logo.png
+	test -f $(STAGING_DIR)/lib/ejabberd-26.07/priv/img/favicon.png
+	test "$$(stat -c '%a' $(STAGING_DIR)/lib/ejabberd-26.07/priv/maer_portal/portal.css)" = 644
+	test "$$(stat -c '%a' $(STAGING_DIR)/lib/ejabberd-26.07/priv/maer_portal/portal.js)" = 644
+	test "$$(stat -c '%a' $(STAGING_DIR)/lib/ejabberd-26.07/priv/img/admin-logo.png)" = 644
+	test "$$(stat -c '%a' $(STAGING_DIR)/lib/ejabberd-26.07/priv/img/favicon.png)" = 644
 	test -f $(STAGING_DIR)/share/maerxmppserver/defaults/ejabberd.yml
 	test -f $(STAGING_DIR)/share/maerxmppserver/licenses/GPL-3.0.txt
 	test -f $(STAGING_DIR)/share/maerxmppserver/licenses/GCC-Runtime-Library-Exception.txt
