@@ -2,15 +2,16 @@ html,body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: #f9f9f9;
-  font-family: sans-serif;
+  background: #0d171c;
+  color: #e8f1f5;
+  font-family: "Segoe UI", Arial, sans-serif;
 }
 body {
   min-width: 990px;
 }
 a {
   text-decoration: none;
-  color: #3eaffa;
+  color: #50e5ff;
 }
 a:hover,
 a:active {
@@ -34,7 +35,7 @@ html>body #container {
   height: 50px;
   padding: 0;
   margin: 0;
-  background-color: #49cbc1;
+  background-color: #101d23;
 }
 #header h1 a {
   position: absolute;
@@ -127,8 +128,8 @@ ul li #navhead a, ul li #navheadsub a, ul li #navheadsubsub a {
 #navhead,
 #navheadsub,
 #navheadsubsub {
-  border-top: 3px solid #49cbc1;
-  background: #424a55;
+  border-top: 3px solid #bd80ff;
+  background: #202e35;
   color: #fff;
 }
 
@@ -272,10 +273,62 @@ table tr td {
   padding: 0.5em;
 }
 table tr:nth-child(odd) {
-  background: #fff;
+  background: #16242b;
 }
 table.withtextareas>tbody>tr>td {
   vertical-align: top;
+}
+
+/* MAER Chat WebAdmin theme */
+#content {
+  background: #101d23;
+  color: #e8f1f5;
+  border: 1px solid #31434c;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+}
+#navigation ul,
+#navigation li,
+td.leftcontent,
+td.rightcontent {
+  background: #16242b;
+  color: #e8f1f5;
+}
+#navigation ul li a {
+  color: #e8f1f5;
+}
+#navigation ul li a:hover,
+#navigation ul li a:focus {
+  color: #50e5ff;
+  background: #202e35;
+}
+#welcome,
+td.leftheader,
+thead tr td {
+  background: #202e35;
+  color: #e8f1f5;
+  border-color: #31434c;
+}
+h1, h2, h3, h4 {
+  color: #50e5ff;
+}
+input, select, textarea, button {
+  color: #e8f1f5;
+  background: #202e35;
+  border: 1px solid #50636d;
+  border-radius: 6px;
+}
+input[type="submit"], button {
+  color: #101d23;
+  background: #3cff82;
+  border-color: #3cff82;
+  font-weight: 600;
+}
+.actionresult.success {
+  border-left: 4px solid #3cff82;
+}
+.actionresult.error {
+  border-left: 4px solid #ffad66;
 }
 textarea {
   margin-bottom: 1em;

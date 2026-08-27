@@ -315,7 +315,7 @@ make_xhtml(Els, Host, Node, Username, #request{lang = Lang} = R, JID, Level) ->
 	    children =
 		[#xmlel{name = <<"head">>, attrs = [],
 			children =
-			    [?XCT(<<"title">>, ?T("ejabberd Web Admin")),
+			    [?XCT(<<"title">>, <<"Administration MAER Chat">>),
 			     #xmlel{name = <<"meta">>,
 				    attrs =
 					[{<<"http-equiv">>, <<"Content-Type">>},
@@ -360,7 +360,7 @@ make_xhtml(Els, Host, Node, Username, #request{lang = Lang} = R, JID, Level) ->
 			   [?XAE(<<"div">>, [{<<"id">>, <<"header">>}],
 				 [?XE(<<"h1">>,
 				      [?ACT(Base,
-					    <<"ejabberd Web Admin">>)])]),
+					    <<"Administration MAER Chat">>)])]),
 			    ?XAE(<<"div">>, [{<<"id">>, <<"navigation">>}],
 				 [?XE(<<"ul">>, MenuItems)]),
 			    ?XAE(<<"div">>, [{<<"id">>, <<"content">>}], Els),
@@ -451,11 +451,11 @@ process_admin(global, #request{path = [], lang = Lang} = Request, AJID) ->
          ] ++ Title ++ [
          ?XAE(<<"blockquote">>,
 	     [{<<"id">>, <<"welcome">>}],
-             [?XC(<<"p">>, <<"Welcome to ejabberd's WebAdmin!">>),
-              ?XC(<<"p">>, <<"Browse the menu to navigate your XMPP virtual hosts, "
-                              "Erlang nodes, and other global server pages...">>),
-              ?XC(<<"p">>, <<"Some pages have a link in the top right corner "
-                              "to relevant documentation in ejabberd Docs.">>),
+             [?XC(<<"p">>, <<"Bienvenue dans l'administration MAER Chat.">>),
+              ?XC(<<"p">>, <<"Utilisez le menu pour gérer les domaines XMPP, "
+                              "les comptes, les services et les nœuds du serveur.">>),
+              ?XC(<<"p">>, <<"Certaines pages proposent, en haut à droite, "
+                              "un lien vers la documentation technique.">>),
               ?X(<<"hr">>),
               ?XE(<<"p">>,
                   [?C(<<"Many pages use ejabberd's API commands to show information "
@@ -834,12 +834,10 @@ list_users_element(_, row, roster, {R, Username, Host, Level}) ->
                   {result_links,
                    [{value, arg_host, Level, <<"user/", Username/binary, "/roster/">>}]}]);
 list_users_element(_, row, last, {R, Username, Host}) ->
-    [?C(element(1,
-                make_command_raw_value(get_last, R, [{<<"user">>, Username}, {<<"host">>, Host}]))),
-     ?C(element(2,
-                make_command_raw_value(get_last,
-                                       R,
-                                       [{<<"user">>, Username}, {<<"host">>, Host}])))];
+    last_command_cells(
+      make_command_raw_value(get_last,
+                             R,
+                             [{<<"user">>, Username}, {<<"host">>, Host}]));
 list_users_element(_, presentation, offline, R) ->
     make_command(get_offline_count, R, [], [{only, presentation}]);
 list_users_element(_, presentation, mam, R) ->
@@ -848,6 +846,13 @@ list_users_element(_, presentation, roster, R) ->
     make_command(get_roster_count, R, [], [{only, presentation}]);
 list_users_element(_, presentation, last, R) ->
     make_command(get_last, R, [], [{only, presentation}]).
+
+last_command_cells({Timestamp, Status}) ->
+    [?C(Timestamp), ?C(Status)];
+last_command_cells(_) ->
+    %% A user without mod_last data (or a transient command failure) must not
+    %% make the complete account-management page unavailable.
+    [?C(<<>>), ?C(<<>>)].
 
 list_users_diapason(Host, R, Usernames, N, RegisterEl) ->
     URLFunc = fun url_func/1,
@@ -1533,8 +1538,8 @@ make_host_menu(global, _HostNodeMenu, _HostUserMenu, _Lang, _JID, _Level) ->
     {<<"">>, <<"">>, []};
 make_host_menu(Host, HostNodeMenu, HostUserMenu, Lang, JID, Level) ->
     HostBase = get_base_path(Host, cluster, Level),
-    HostFixed = [{<<"users">>, ?T("Users"), HostUserMenu},
-		 {<<"online-users">>, ?T("Online Users")}],
+    HostFixed = [{<<"users">>, <<"Utilisateurs">>, HostUserMenu},
+		 {<<"online-users">>, <<"Utilisateurs en ligne">>}],
     HostFixedAdditional =
 		  get_lastactivity_menuitem_list(Host) ++
 		    [{<<"nodes">>, ?T("Nodes"), HostNodeMenu}]
@@ -1787,17 +1792,23 @@ make_command(Name, Request, BaseArguments, Options) ->
 
 if_cmd_allowed(Name, Request, Fun) ->
     CallerInfo = caller_info(Request),
-    try {ejabberd_commands:get_command_definition(Name),
-         ejabberd_access_permissions:can_access(Name, CallerInfo)}
-    of
-        {Cmd, allow} ->
-            Fun(Cmd);
-        {_C, deny} ->
-            ?DEBUG("Blocked access to command ~p for~n CallerInfo: ~p", [Name, CallerInfo]),
-            ?C(<<"">>)
+    try
+        Cmd = ejabberd_commands:get_command_definition(Name),
+        case ejabberd_access_permissions:can_access(Name, CallerInfo) of
+            allow ->
+                %% Keep command preparation and execution inside the protected
+                %% expression.  Exceptions raised from an `of` clause are not
+                %% handled by the catch clauses of the same try expression.
+                Fun(Cmd);
+            deny ->
+                ?DEBUG("Blocked access to command ~p for~n CallerInfo: ~p",
+                       [Name, CallerInfo]),
+                ?C(<<>>)
+        end
     catch
-        A:B ->
-            ?INFO_MSG("Problem preparing command ~p: ~p", [Name, {A, B}]),
+        A:B:Stacktrace ->
+            ?ERROR_MSG("Problem preparing or executing WebAdmin command ~p: ~p~n~p",
+                       [Name, {A, B}, Stacktrace]),
             ?C(<<"">>)
     end.
 
@@ -3104,6 +3115,19 @@ clean_token_duplicates_query(Query) ->
     Value = proplists:get_value(<<"csrf_token">>, Query),
     Cleaned = proplists:delete(<<"csrf_token">>, Query),
     [{<<"csrf_token">>, Value} | Cleaned].
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+last_command_cells_tuple_test() ->
+    ?assertEqual(2, length(last_command_cells({1234, <<"absent">>}))).
+
+last_command_cells_missing_value_test() ->
+    ?assertEqual(2, length(last_command_cells({error, not_found, transient}))).
+
+last_command_cells_denied_value_test() ->
+    ?assertEqual(2, length(last_command_cells(<<>>))).
+-endif.
 
 %%%==================================
 %%% vim: set foldmethod=marker foldmarker=%%%%,%%%=:
