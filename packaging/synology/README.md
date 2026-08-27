@@ -166,10 +166,30 @@ le contrat de privilèges généré, les chemins persistants, les ports, l'absen
 de secrets ou de marqueurs de substitution et la syntaxe des scripts shell. Il
 exécute aussi le test de comportement du service si `sh` est disponible. Avec
 `-SpkPath`, il ouvre les deux couches d'archive, vérifie les modes DSM, les
-composants et licences attendus, et refuse les sources, exemples, documentation,
+composants et licences attendus, et refuse les sources, répertoires d'exemples, documentation,
 archives statiques, applications OTP de développement, outils, clés privées,
 chemins de build et dépendances runtime non résolues qui n'ont rien à faire dans
 le runtime livré.
+
+### Barrière obligatoire pour chaque nouveau SPK
+
+Toute création de SPK destinée à être installée ou publiée doit terminer par :
+
+```powershell
+pwsh -NoProfile -File packaging/synology/tests/release-gate.ps1 -SpkPath /chemin/vers/maerxmppserver_armada38x-7.1_VERSION.spk
+```
+
+Cette barrière enregistre et bloque explicitement les régressions déjà rencontrées :
+
+- décalage entre la version du nom de fichier, `INFO`, `LOCKS.json` et le contrat attendu ;
+- absence du NIF JID ou démarrage de la validation avant `application:ensure_all_started(xmpp)` ;
+- absence de `crypto_callback.so`, chargeur OpenSSL dynamique indispensable à OTP 27 ;
+- suppression abusive de `httpd_example.beam`, module runtime `inets` requis par ejabberd ;
+- `HOME` Erlang absent ou situé hors du répertoire privé du compte DSM ;
+- mode non exécutable des scripts DSM, dépendance ELF manquante, RPATH non canonique ou lien symbolique pendant.
+
+Le paquet ne doit être copié sur le NAS qu'après le message
+`MAER XMPP Server release gate passed` et l'émission de son SHA-256.
 
 La reproductibilité des fins de ligne se vérifie séparément dans deux clones
 propres synthétiques, l'un avec le profil Git Windows et l'autre avec le profil

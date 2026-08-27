@@ -367,6 +367,7 @@ $requiredFiles = @(
     'PUBLICATION-PREFLIGHT.md',
     'dsm-publication-preflight.ps1',
     'tests\expected-info.json',
+    'tests\release-gate.ps1',
     'tests\test-clean-checkouts.ps1',
     'tests\test-service-contract.sh',
     'tests\test-upload-monitor.sh',
