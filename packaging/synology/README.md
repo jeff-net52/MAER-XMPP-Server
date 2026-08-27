@@ -145,26 +145,29 @@ exigent l'origine canonique, un cookie SameSite/HttpOnly/Secure et un jeton
 CSRF à usage borné. Les tentatives de connexion et les envois email sont
 limités par IP et par compte.
 
-Sans SMTP, la connexion et les préférences fonctionnent mais les actions email
-restent désactivées. Pour les activer, l'opérateur doit :
+L'assistant DSM demande le mot de passe SMTP pendant une installation neuve ou
+la migration rev8 → rev9. Le paquet le valide puis le provisionne atomiquement
+dans `/var/packages/maerxmppserver/var/config/smtp-password`, sous le compte de
+service et en mode exact `0600`. Le profil canonique contient déjà :
 
-1. créer, avec une entrée interactive qui n'apparaît ni dans l'historique ni
-   dans la ligne de commande, le fichier
-   `/var/packages/maerxmppserver/var/config/smtp-password` ;
-2. l'attribuer à `sc-maerxmppserver:sc-maerxmppserver`, mode `0600`, sans lien
-   symbolique ;
-3. renseigner sous `modules.mod_maer_portal` dans le `ejabberd.yml` installé :
+```yaml
+smtp_host: smtp-zose.yulpa.io
+smtp_port: 465
+smtp_username: no-reply@maer.fr
+smtp_password_file: /var/packages/maerxmppserver/var/config/smtp-password
+smtp_from: no-reply@maer.fr
+```
 
-   ```yaml
-   smtp_host: smtp-zose.yulpa.io
-   smtp_port: 465
-   smtp_username: no-reply@maer.fr
-   smtp_password_file: /var/packages/maerxmppserver/var/config/smtp-password
-   smtp_from: no-reply@maer.fr
-   ```
-
-4. redémarrer le paquet et tester séparément l'association d'adresse puis le
-   changement de mot de passe.
+Une création manuelle ne sert qu'au dépannage si le secret provisionné par DSM
+a été perdu ou supprimé. Dans ce cas, arrêter le paquet, recréer ce fichier avec
+une saisie interactive qui n'apparaît ni dans l'historique ni dans la ligne de
+commande, refuser tout lien symbolique, lui appliquer le propriétaire
+`sc-maerxmppserver:sc-maerxmppserver` et le mode exact `0600`, puis redémarrer.
+Il ne faut ni placer le secret dans `ejabberd.yml`, ni modifier les cinq valeurs
+canoniques ci-dessus. Tester ensuite séparément l'association d'adresse email et
+le changement de mot de passe. Sans secret lisible et strictement protégé, la
+connexion et les préférences restent disponibles mais les actions email sont
+désactivées.
 
 Le transport SMTP accepte uniquement TLS implicite, vérifie la chaîne publique
 et le nom du serveur, et ne journalise ni identifiants, ni mots de passe, ni

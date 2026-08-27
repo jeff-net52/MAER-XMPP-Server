@@ -82,6 +82,7 @@ Require ($config -match '(?m)^\s+smtp_host: smtp-zose\.yulpa\.io$') 'Reviewed Yu
 Require ($config -match '(?m)^\s+smtp_port: 465$') 'SMTP must use implicit TLS on port 465.'
 Require ($config -match '(?m)^\s+smtp_username: no-reply@maer\.fr$') 'Reviewed non-secret SMTP username is missing.'
 Require ($config -match '(?m)^\s+smtp_password_file: /var/packages/maerxmppserver/var/config/smtp-password$') 'SMTP password must come from the server-side file.'
+Require ($config -match '(?m)^\s+smtp_from: no-reply@maer\.fr$') 'Reviewed SMTP envelope and message sender is missing.'
 Require ($smtp.Contains('password_file_available(PasswordFile)')) 'SMTP readiness does not fail closed when the password file is absent.'
 Require ($config -match '(?m)^websocket_origin:\n  - https://xmpp\.maer\.fr\n  - maer-chat://app$') 'WebSocket origins must allow only the web origin and privileged Electron scheme.'
 Require (-not ($config.Contains('file://'))) 'The unsafe Electron file origin must never be allowed.'
