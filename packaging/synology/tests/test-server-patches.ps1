@@ -16,7 +16,8 @@ $serverMakefilePath = Join-Path $synologyRoot 'spksrc-overlay\cross\maerxmppserv
 $patches = @(
     (Join-Path $patchRoot '002-rebar-deterministic-beam.patch'),
     (Join-Path $patchRoot '003-maer-user-portal.patch'),
-    (Join-Path $patchRoot '004-maer-webadmin.patch')
+    (Join-Path $patchRoot '004-maer-webadmin.patch'),
+    (Join-Path $patchRoot '005-maer-native-websocket-origin.patch')
 )
 $targetPaths = @(
     'rebar.config',
@@ -25,7 +26,8 @@ $targetPaths = @(
     'priv/maer_portal/portal.css',
     'priv/maer_portal/portal.js',
     'priv/css/admin.css',
-    'src/ejabberd_web_admin.erl'
+    'src/ejabberd_web_admin.erl',
+    'src/ejabberd_options.erl'
 )
 $portalPaths = @(
     'src/maer_portal_smtp.erl',

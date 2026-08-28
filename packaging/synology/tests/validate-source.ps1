@@ -115,10 +115,12 @@ function Validate-BuiltSpk {
 
         $infoPath = Join-Path $temporaryRoot 'INFO'
         $privilegePath = Join-Path $temporaryRoot 'conf\privilege'
+        $installerPath = Join-Path $temporaryRoot 'scripts\installer'
         $installWizardPath = Join-Path $temporaryRoot 'WIZARD_UIFILES\install_uifile'
         $upgradeWizardPath = Join-Path $temporaryRoot 'WIZARD_UIFILES\upgrade_uifile'
         Assert-True (Test-Path -LiteralPath $infoPath -PathType Leaf) 'Built SPK has no INFO file.'
         Assert-True (Test-Path -LiteralPath $privilegePath -PathType Leaf) 'Built SPK has no conf/privilege file.'
+        Assert-True (Test-Path -LiteralPath $installerPath -PathType Leaf) 'Built SPK has no DSM lifecycle installer.'
         Assert-True (Test-Path -LiteralPath $installWizardPath -PathType Leaf) 'Built SPK has no SMTP install wizard.'
         Assert-True (Test-Path -LiteralPath $upgradeWizardPath -PathType Leaf) 'Built SPK has no SMTP upgrade wizard.'
 
@@ -148,6 +150,14 @@ function Validate-BuiltSpk {
             }
         }
 
+        if (Test-Path -LiteralPath $installerPath -PathType Leaf) {
+            $installerText = Read-TextNormalized $installerPath
+            Assert-True ($installerText.Contains('FUNC_STATUS=0')) 'Built DSM installer does not capture lifecycle hook status.'
+            Assert-True ($installerText.Contains('exit "${FUNC_STATUS}"')) 'Built DSM installer does not propagate a failed lifecycle hook.'
+            Assert-True ($installerText.Contains('Failed ${FUNC} (status ${FUNC_STATUS})')) 'Built DSM installer has no explicit fail-closed lifecycle marker.'
+            Assert-True (-not $installerText.Contains('eval ${FUNC} 2>&1 | ${LOG}')) 'Built DSM installer still masks hook failures behind its logger pipeline.'
+        }
+
         $listing = @(& tar -tvf $resolvedPackage)
         if ($LASTEXITCODE -ne 0) {
             Add-Failure 'Unable to list SPK permissions.'
@@ -155,16 +165,19 @@ function Validate-BuiltSpk {
         else {
             $startStopLine = $listing | Where-Object { $_ -match '(?:^|\s)(?:\./)?scripts/start-stop-status$' } | Select-Object -First 1
             $setupLine = $listing | Where-Object { $_ -match '(?:^|\s)(?:\./)?scripts/service-setup$' } | Select-Object -First 1
+            $installerLine = $listing | Where-Object { $_ -match '(?:^|\s)(?:\./)?scripts/installer$' } | Select-Object -First 1
             $privilegeLine = $listing | Where-Object { $_ -match '(?:^|\s)(?:\./)?conf/privilege$' } | Select-Object -First 1
             $installWizardLine = $listing | Where-Object { $_ -match '(?:^|\s)(?:\./)?WIZARD_UIFILES/install_uifile$' } | Select-Object -First 1
             $upgradeWizardLine = $listing | Where-Object { $_ -match '(?:^|\s)(?:\./)?WIZARD_UIFILES/upgrade_uifile$' } | Select-Object -First 1
             Assert-True ([bool]$startStopLine) 'SPK listing has no start-stop-status script.'
             Assert-True ([bool]$setupLine) 'SPK listing has no service-setup script.'
+            Assert-True ([bool]$installerLine) 'SPK listing has no lifecycle installer script.'
             Assert-True ([bool]$privilegeLine) 'SPK listing has no privilege file.'
             Assert-True ([bool]$installWizardLine) 'SPK listing has no install wizard.'
             Assert-True ([bool]$upgradeWizardLine) 'SPK listing has no upgrade wizard.'
             if ($startStopLine) { Assert-True ($startStopLine -match '^-rwxr-xr-x\s') 'start-stop-status mode must be 0755.' }
             if ($setupLine) { Assert-True ($setupLine -match '^-rwxr-xr-x\s') 'service-setup mode must be 0755.' }
+            if ($installerLine) { Assert-True ($installerLine -match '^-rwxr-xr-x\s') 'Lifecycle installer mode must be 0755.' }
             if ($privilegeLine) { Assert-True ($privilegeLine -match '^-rw-r--r--\s') 'conf/privilege mode must be 0644.' }
             if ($installWizardLine) { Assert-True ($installWizardLine -match '^-rw-r--r--\s') 'Install wizard mode must be 0644.' }
             if ($upgradeWizardLine) { Assert-True ($upgradeWizardLine -match '^-rw-r--r--\s') 'Upgrade wizard mode must be 0644.' }
@@ -448,6 +461,7 @@ $requiredFiles = @(
     'spksrc-overlay\cross\maerxmppserver\patches\002-rebar-deterministic-beam.patch',
     'spksrc-overlay\cross\maerxmppserver\patches\003-maer-user-portal.patch',
     'spksrc-overlay\cross\maerxmppserver\patches\004-maer-webadmin.patch',
+    'spksrc-overlay\cross\maerxmppserver\patches\005-maer-native-websocket-origin.patch',
     'tests\inspect-pairing-beam.escript',
     'spksrc-overlay\spk\maerxmppserver\Makefile',
     'spksrc-overlay\spk\maerxmppserver\src\COPYING',
@@ -455,6 +469,7 @@ $requiredFiles = @(
     'spksrc-overlay\spk\maerxmppserver\src\maerxmppserver.png',
     'spksrc-overlay\spk\maerxmppserver\src\service-setup.sh',
     'spksrc-overlay\spk\maerxmppserver\src\service-start-stop.sh',
+    'spksrc-overlay\spk\maerxmppserver\src\installer-fail-closed.patch',
     'spksrc-overlay\spk\maerxmppserver\src\upload-usage-check.sh',
     'operator\maer-certificate-sync',
     'operator\install-certificate-sync-root',
@@ -473,6 +488,8 @@ $requiredFiles = @(
     'tests\release-gate.ps1',
     'tests\test-spk-path-resolution.ps1',
     'tests\test-clean-checkouts.ps1',
+    'tests\test-installer-contract.sh',
+    'tests\test-installer-recipe-order.sh',
     'tests\test-service-contract.sh',
     'tests\test-upload-monitor.sh',
     'tests\test-certificate-sync.sh',
@@ -503,6 +520,9 @@ Assert-Equal (Get-MakeValue $spkMakefile 'UNSUPPORTED_ARCHS') '$(filter-out arma
 Assert-True ($spkMakefile -match '(?m)^\s*chmod 755 \$\(STAGING_DIR\)/bin/ejabberdctl$') 'Packaged ejabberdctl must be executable by the DSM service user.'
 Assert-Equal (Get-MakeValue $spkMakefile 'POST_STRIP_TARGET') 'maerxmppserver_runtime_finalize' 'Runtime hardening must run after the standard strip phase.'
 Assert-Equal (Get-MakeValue $spkMakefile 'POST_SERVICE_TARGET') 'maerxmppserver_service_finalize' 'DSM service script modes must be finalized before outer packaging.'
+Assert-True ($spkMakefile.Contains('maerxmppserver_service_finalize: $(DSM_SCRIPTS_DIR)/installer')) 'MAER POST_SERVICE_TARGET must depend on the generated installer before patching it.'
+Assert-True ($spkMakefile.Contains('patch --batch --forward --fuzz=0 --no-backup-if-mismatch -d $(DSM_SCRIPTS_DIR) -p0 < $(CURDIR)/src/installer-fail-closed.patch')) 'MAER POST_SERVICE_TARGET must apply the reviewed lifecycle patch only to its generated installer.'
+Assert-True ($spkMakefile.Contains("! grep -F -q 'eval `$`${FUNC} 2>&1 | `$`${LOG}' `$`(DSM_SCRIPTS_DIR)/installer")) 'MAER POST_SERVICE_TARGET must reject the vulnerable logger pipeline after patching.'
 Assert-Equal (Get-MakeValue $spkMakefile 'RUNTIME_RPATH') '/var/packages/maerxmppserver/target/lib' 'Runtime RPATH must use only the canonical package library path.'
 Assert-Equal (Get-MakeValue $spkMakefile 'MAER_SERVER_COMMIT') $locks.maer_xmpp_server.commit 'SPK runtime asset source must use the immutable MAER server commit.'
 Assert-Equal (Get-MakeValue $spkMakefile 'MAER_SERVER_SOURCE_DIR') '$(WORK_DIR)/MAER-XMPP-Server-$(MAER_SERVER_COMMIT)' 'SPK runtime assets must come from the patched source tree in the active SPK work directory.'
@@ -576,8 +596,9 @@ $serverMakefile = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppser
 $rebarDeterministicPatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\patches\002-rebar-deterministic-beam.patch')
 $portalSourcePatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\patches\003-maer-user-portal.patch')
 $webAdminSourcePatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\patches\004-maer-webadmin.patch')
+$nativeWebSocketOriginPatch = Read-TextNormalized (Join-Path $overlayRoot 'cross\maerxmppserver\patches\005-maer-native-websocket-origin.patch')
 $serverPatchNames = @(Get-ChildItem -LiteralPath (Join-Path $overlayRoot 'cross\maerxmppserver\patches') -File | Sort-Object Name | ForEach-Object Name)
-Assert-Equal ($serverPatchNames -join ',') '002-rebar-deterministic-beam.patch,003-maer-user-portal.patch,004-maer-webadmin.patch' 'Server patch inventory must contain only deterministic compilation and the reviewed MAER additions.'
+Assert-Equal ($serverPatchNames -join ',') '002-rebar-deterministic-beam.patch,003-maer-user-portal.patch,004-maer-webadmin.patch,005-maer-native-websocket-origin.patch' 'Server patch inventory must contain only deterministic compilation and the reviewed MAER additions.'
 Assert-Equal (Get-MakeValue $nativeOtpMakefile 'PKG_VERS') $locks.erlang_otp.version 'Native OTP version mismatch.'
 Assert-Equal (Get-MakeValue $crossOtpMakefile 'PKG_VERS') $locks.erlang_otp.version 'Cross OTP version mismatch.'
 Assert-Equal (Get-MakeValue $serverMakefile 'PKG_COMMIT') $locks.maer_xmpp_server.commit 'MAER source commit mismatch.'
@@ -599,7 +620,10 @@ foreach ($portalPatchPath in @('src/maer_portal_smtp.erl', 'src/mod_maer_portal.
 }
 Assert-True ($webAdminSourcePatch.Contains('+++ src/ejabberd_web_admin.erl')) 'Locked server patch must contain the reviewed WebAdmin users-page fix with a patch -p0 path.'
 Assert-True ($webAdminSourcePatch.Contains('+++ priv/css/admin.css')) 'Locked server patch must contain the MAER WebAdmin theme with a patch -p0 path.'
-foreach ($serverPatch in @($rebarDeterministicPatch, $portalSourcePatch, $webAdminSourcePatch)) {
+Assert-True ($nativeWebSocketOriginPatch.Contains('+++ src/ejabberd_options.erl')) 'Locked server patch must contain the bounded MAER native WebSocket origin validator with a patch -p0 path.'
+Assert-True ($nativeWebSocketOriginPatch.Contains('econf:enum([<<"maer-chat://app">>])')) 'Native WebSocket origin patch must allow only the exact MAER application origin.'
+Assert-True (-not ($nativeWebSocketOriginPatch.Contains('econf:binary(), [unique]'))) 'Native WebSocket origin patch must not broaden validation to arbitrary schemes.'
+foreach ($serverPatch in @($rebarDeterministicPatch, $portalSourcePatch, $webAdminSourcePatch, $nativeWebSocketOriginPatch)) {
     Assert-True (-not ($serverPatch -match '(?m)^(?:---|\+\+\+) [ab]/')) 'Server patches must not use Git a/ or b/ prefixes because spksrc applies them with patch -p0.'
 }
 Assert-True ($serverMakefile.Contains('cp maer/assets/maer-mark.png priv/img/admin-logo.png')) 'WebAdmin build must install the reviewed MAER logo.'
@@ -708,6 +732,7 @@ $configPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\defaults\ejabberd.y
 $controlConfigPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\defaults\ejabberdctl.cfg'
 $serviceSetupPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\service-setup.sh'
 $serviceScriptPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\service-start-stop.sh'
+$installerPatchPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\installer-fail-closed.patch'
 $installWizardPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\wizard\install_uifile'
 $upgradeWizardPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\wizard\upgrade_uifile'
 $uploadMonitorPath = Join-Path $overlayRoot 'spk\maerxmppserver\src\upload-usage-check.sh'
@@ -724,6 +749,7 @@ $configText = Read-TextNormalized $configPath
 $controlConfigText = Read-TextNormalized $controlConfigPath
 $serviceSetupText = Read-TextNormalized $serviceSetupPath
 $serviceScriptText = Read-TextNormalized $serviceScriptPath
+$installerPatchText = Read-TextNormalized $installerPatchPath
 $installWizardText = Read-TextNormalized $installWizardPath
 $upgradeWizardText = Read-TextNormalized $upgradeWizardPath
 $uploadMonitorText = Read-TextNormalized $uploadMonitorPath
@@ -750,6 +776,8 @@ Assert-True ($configText -match '(?m)^\s+mod_mam:$') 'MAM module is missing.'
 Assert-True ($configText -match '(?m)^\s+mod_muc:$') 'MUC module is missing.'
 Assert-True ($configText -match '(?m)^\s+/maer-pairing: mod_maer_pairing$') 'MAER pairing must be exposed only by the configured HTTPS listener.'
 Assert-True ($configText -match '(?m)^\s+mod_maer_pairing: \{\}$') 'MAER pairing module is missing.'
+Assert-True ($configText -match '(?m)^oauth_access: local$') 'MAER pairing OAuth issuance must be enabled only for the canonical local-account access rule.'
+Assert-True (-not ($configText -match '(?m)^oauth_access:\s+(?:all|none)\s*$')) 'MAER pairing must neither disable OAuth issuance nor broaden it to every JID.'
 Assert-True ($configText -match '(?m)^\s+/account: mod_maer_portal$') 'MAER account portal must be exposed by the configured HTTPS listener.'
 Assert-True ($configText -match '(?m)^\s+mod_maer_portal:$') 'MAER account portal module is missing.'
 Assert-True ($configText -match '(?m)^\s+database_path: /var/packages/maerxmppserver/var/data/maer-portal\.sqlite$') 'Portal must use its dedicated SQLite database.'
@@ -834,21 +862,32 @@ Assert-True ($serviceScriptText -match 'TLS certificate permissions must be 0640
 Assert-True ($serviceScriptText -match 'MAER_CERTIFICATE_OWNER:-root:sc-maerxmppserver') 'TLS key ownership gate must require root and the isolated service group.'
 Assert-True (-not ($serviceScriptText -match 'kill\s+-9|rm\s+-r[fF]|(?m)^\s*(synopkg|sudo)\b')) 'Service script contains a destructive or privileged fallback.'
 Assert-True ($serviceScriptText -match 'kill -0') 'Service status must verify the PID without signaling it.'
+Assert-True ($installerPatchText.StartsWith("--- installer`n+++ installer`n")) 'Lifecycle patch must target only the generated installer with patch -p0 paths.'
+Assert-True ($installerPatchText.Contains('FUNC_OUTPUT=$(eval ${FUNC} 2>&1)')) 'Lifecycle patch must capture hook output without a status-masking pipeline.'
+Assert-True ($installerPatchText.Contains('FUNC_STATUS=$?')) 'Lifecycle patch must capture the hook status immediately.'
+Assert-True ($installerPatchText.Contains('exit "${FUNC_STATUS}"')) 'Lifecycle patch must propagate the exact hook status to DSM.'
+Assert-True (-not $installerPatchText.Contains('set -o pipefail')) 'Lifecycle patch must remain portable to DSM /bin/sh without relying on pipefail.'
 Assert-True ($serviceSetupText -match 'chmod 700') 'Runtime directories are not restricted to mode 0700.'
 Assert-True ($serviceSetupText -match 'chmod 600') 'Runtime configuration files are not restricted to mode 0600.'
 Assert-True ($serviceSetupText -match '(?m)^validate_preupgrade\(\)$') 'Package must define an upgrade validation hook.'
-Assert-True ($serviceSetupText -match 'only supports an in-place upgrade from 26\.07\.0-8') 'Upgrade must be restricted to the validated revision-8 source.'
+Assert-True ($serviceSetupText -match 'only supports in-place upgrades from 26\.07\.0-8, 26\.07\.0-9 or 26\.07\.0-10') 'Upgrade must be restricted to the validated revision-8, revision-9 and revision-10 sources.'
+Assert-True ([regex]::Matches($serviceSetupText, '26\.07\.0-8\|26\.07\.0-9\|26\.07\.0-10').Count -eq 2) 'Both upgrade hooks must accept exactly revision 8, revision 9 and revision 10.'
 Assert-True ($serviceSetupText -match '(?m)^validate_runtime_root\(\)$') 'Package must validate DSM package-data indirection explicitly.'
 Assert-True ($serviceSetupText -match 'resolved_runtime_root.*resolved_synopkg_var') 'DSM package-data symlink must resolve to SYNOPKG_PKGVAR.'
 Assert-True (-not ($serviceSetupText -match '\[ -L "\$\{MAER_VAR_DIR\}" \].*refusing upgrade')) 'DSM 7 package-data symlink must not be rejected unconditionally.'
 Assert-True ($serviceSetupText -match 'requires an empty package data directory') 'Clean install must reject retained package state.'
 Assert-True (-not ($serviceSetupText -match '(?ms)^service_postupgrade\(\).*?install_runtime_defaults')) 'Upgrade hook must never preserve an older runtime profile.'
-Assert-True ($serviceSetupText -match '(?ms)^service_postupgrade\(\).*?backup_upgrade_configuration.*?replace_default_file ejabberd\.yml') 'Revision-8 configuration must be backed up before the canonical revision-9 profile is installed.'
+Assert-True ($serviceSetupText -match 'ejabberd\.yml\.pre-26\.07\.0-11') 'Upgrade recovery copy must be versioned for revision 11.'
+Assert-True ($serviceSetupText -match '(?ms)^service_postupgrade\(\).*?backup_upgrade_configuration.*?replace_default_file ejabberd\.yml') 'Revision-8, revision-9 or revision-10 configuration must be backed up before the canonical revision-11 profile is installed.'
 Assert-True (-not ($serviceSetupText -match '(?m)^\s*rm\s+-r')) 'Installer setup must not recursively remove existing state.'
 Assert-True ($serviceSetupText -match 'temporary_file="\$\{target_file\}\.maer-upgrade\.\$\$"') 'Upgrade replacement must use a bounded temporary configuration path.'
 Assert-True ($serviceSetupText -match 'mv "\$\{temporary_file\}" "\$\{target_file\}"') 'Upgrade replacement must atomically install the canonical profile.'
 Assert-True ($serviceSetupText -match '(?m)^install_smtp_password\(\)$') 'Installer must provision the SMTP secret through a dedicated routine.'
 Assert-True ($serviceSetupText -match '(?m)^validate_smtp_password_input\(\)$') 'Installer must validate SMTP input before changing package state.'
+Assert-True ($serviceSetupText -match '\$\{#secret_value\}.*-lt 12') 'Service-side SMTP validation must reject nonblank passwords shorter than 12 characters.'
+Assert-True ($serviceSetupText -match '\$\{#secret_value\}.*-gt 4094') 'Service-side SMTP validation must reject nonblank passwords longer than 4094 characters.'
+Assert-True ($serviceSetupText -match '(?ms)^validate_preinst\(\)\s*\{.*?if \[ "\$\{SYNOPKG_PKG_STATUS:-\}" = ''UPGRADE'' \]; then\s*return 0\s*fi') 'DSM upgrade preinst must defer clean-install checks while retained package data is unavailable.'
+Assert-True ($serviceSetupText -match '(?ms)^service_postinst\(\)\s*\{.*?if \[ "\$\{SYNOPKG_PKG_STATUS:-\}" = ''UPGRADE'' \]; then\s*return 0\s*fi') 'DSM upgrade postinst must defer runtime and SMTP changes to service_postupgrade.'
 Assert-True ($serviceSetupText -match '(?ms)^validate_preinst\(\).*?validate_smtp_password_input \|\| exit 1') 'Clean-install preflight must reject missing or invalid SMTP input.'
 Assert-True ($serviceSetupText -match '(?ms)^validate_preupgrade\(\).*?validate_smtp_password_input \|\| exit 1') 'Upgrade preflight must reject missing or invalid SMTP input before migration.'
 Assert-True ($serviceSetupText -match 'secret_file="\$\{CONFIG_DIR\}/smtp-password"') 'SMTP secret must be written only below the package configuration directory.'
@@ -860,12 +899,16 @@ $null = $installWizardText | ConvertFrom-Json
 $null = $upgradeWizardText | ConvertFrom-Json
 foreach ($wizardText in @($installWizardText, $upgradeWizardText)) {
     Assert-True ($wizardText.Contains('"key": "wizard_smtp_password"')) 'DSM wizard must use the service-setup SMTP password variable.'
-    Assert-True ($wizardText.Contains('"allowBlank": false')) 'DSM wizard must refuse an empty SMTP password.'
-    Assert-True ($wizardText.Contains('"minLength": 12')) 'DSM wizard must enforce the reviewed minimum SMTP password length.'
-    Assert-True ($wizardText.Contains('"maxLength": 4094')) 'DSM wizard must enforce the SMTP transport maximum password length.'
     Assert-True ($wizardText.Contains('no-reply@maer.fr')) 'DSM wizard must identify the exact portal sender account.'
     Assert-True ($wizardText.Contains('mode 0600')) 'DSM wizard must explain how the SMTP secret is protected.'
 }
+Assert-True ($installWizardText.Contains('"allowBlank": false')) 'Fresh installation must require an SMTP password.'
+Assert-True ($installWizardText.Contains('"minLength": 12')) 'Fresh-install wizard must enforce the reviewed minimum SMTP password length.'
+Assert-True ($installWizardText.Contains('"maxLength": 4094')) 'Fresh-install wizard must enforce the SMTP transport maximum password length.'
+Assert-True ($upgradeWizardText.Contains('"allowBlank": true')) 'Upgrade wizard must permit an empty value so a validated rev9 or rev10 SMTP secret can be retained.'
+Assert-True (-not $upgradeWizardText.Contains('"minLength"')) 'Optional upgrade password must not combine allowBlank with DSM minLength validation.'
+Assert-True (-not $upgradeWizardText.Contains('"maxLength"')) 'Optional upgrade password must not combine allowBlank with DSM maxLength validation.'
+Assert-True ($upgradeWizardText.Contains('Laissez le champ vide pour conserver le secret SMTP existant')) 'Upgrade wizard must explain that a blank value retains the existing SMTP secret.'
 Assert-True (-not ($serviceSetupText -match '(?m)^\s*HOME=(?!"\$\{MAER_PACKAGE_ROOT\}/home"$)')) 'Service setup must not direct Erlang HOME outside the DSM package home.'
 
 Assert-True ($uploadMonitorText -match 'MAER_UPLOAD_FS_WARN_PERCENT:-80') 'Global upload monitor warning threshold must default to 80 percent.'
@@ -926,7 +969,7 @@ Assert-True ($bootstrapInstallerText.Contains('8c4123bc819a998ec767ce80d449708cc
 Assert-True ($bootstrapInstallerText.Contains('/usr/local/libexec/maerxmppserver')) 'Bootstrap installer must place the reviewed tool outside package-owned FHS paths.'
 Assert-True ($bootstrapInstallerText.Contains('trap cleanup EXIT') -and $bootstrapInstallerText.Contains('exit 129') -and $bootstrapInstallerText.Contains('exit 130') -and $bootstrapInstallerText.Contains('exit 143')) 'Bootstrap installer signal traps must terminate explicitly.'
 
-foreach ($shellPath in @($serviceSetupPath, $serviceScriptPath, $uploadMonitorPath, $certificateSyncPath, $certificateInstallerPath, $bootstrapAdminPath, $bootstrapInstallerPath, $prepareShellPath, (Join-Path $testsRoot 'test-service-contract.sh'), (Join-Path $testsRoot 'test-upload-monitor.sh'), (Join-Path $testsRoot 'test-certificate-sync.sh'), (Join-Path $testsRoot 'test-bootstrap-admin.sh'))) {
+foreach ($shellPath in @($serviceSetupPath, $serviceScriptPath, $uploadMonitorPath, $certificateSyncPath, $certificateInstallerPath, $bootstrapAdminPath, $bootstrapInstallerPath, $prepareShellPath, (Join-Path $testsRoot 'test-installer-contract.sh'), (Join-Path $testsRoot 'test-installer-recipe-order.sh'), (Join-Path $testsRoot 'test-service-contract.sh'), (Join-Path $testsRoot 'test-upload-monitor.sh'), (Join-Path $testsRoot 'test-certificate-sync.sh'), (Join-Path $testsRoot 'test-bootstrap-admin.sh'))) {
     Assert-LfShellFile $shellPath
 }
 
@@ -954,6 +997,8 @@ if ($shellExecutable) {
             'operator/install-certificate-sync-root',
             'operator/maer-bootstrap-admin',
             'operator/install-bootstrap-admin-root',
+            'tests/test-installer-contract.sh',
+            'tests/test-installer-recipe-order.sh',
             'tests/test-service-contract.sh',
             'tests/test-upload-monitor.sh',
             'tests/test-certificate-sync.sh',
@@ -963,6 +1008,14 @@ if ($shellExecutable) {
             if ($LASTEXITCODE -ne 0) {
                 Add-Failure "Shell syntax check failed: $relativeShellPath"
             }
+        }
+        & $shellExecutable 'tests/test-installer-contract.sh'
+        if ($LASTEXITCODE -ne 0) {
+            Add-Failure 'DSM installer lifecycle contract test failed.'
+        }
+        & $shellExecutable 'tests/test-installer-recipe-order.sh'
+        if ($LASTEXITCODE -ne 0) {
+            Add-Failure 'DSM installer recipe generation-order test failed.'
         }
         & $shellExecutable 'tests/test-service-contract.sh'
         if ($LASTEXITCODE -ne 0) {

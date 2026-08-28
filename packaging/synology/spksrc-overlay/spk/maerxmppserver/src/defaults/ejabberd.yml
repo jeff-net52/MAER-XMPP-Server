@@ -19,6 +19,12 @@ certfiles:
 auth_method: sql
 auth_stored_password_types:
   - scram_sha256
+# mod_maer_pairing issues a narrowly scoped sasl_auth token only after an
+# authenticated local XMPP account approves the Windows session.  ejabberd's
+# default is `none`, which would make every approval fail after a successful
+# QR inspection.  Reuse the local-only access rule below instead of enabling
+# OAuth issuance for arbitrary domains.
+oauth_access: local
 disable_sasl_mechanisms:
   - ANONYMOUS
   - CRAM-MD5

@@ -5,7 +5,7 @@
 SPK_NAME = maerxmppserver
 GROUP = sc-maerxmppserver
 SPK_VERS = 26.07.0
-SPK_REV = 9
+SPK_REV = 11
 SPK_ICON = src/maerxmppserver.png
 
 DEPENDS = cross/maerxmppserver
@@ -26,7 +26,7 @@ override DISTRIBUTOR = MAER
 override DISTRIBUTOR_URL = https://github.com/jeff-net52/MAER-XMPP-Server
 DESCRIPTION = Private XMPP messaging server for MAER Chat.
 DISPLAY_NAME = MAER XMPP Server
-CHANGELOG = "MAER account portal, branded WebAdmin fix, desktop origin support, LAN fail2ban correction, and validated revision-8 migration."
+CHANGELOG = "Repair-safe SMTP retention and validated revision-8/revision-9/revision-10 migration."
 
 HOMEPAGE = https://github.com/jeff-net52/MAER-XMPP-Server
 HELPURL = https://github.com/jeff-net52/MAER-XMPP-Server/tree/maer/server-v1/packaging/synology
@@ -114,9 +114,20 @@ maerxmppserver_copy_runtime: copy_target
 	test -f $(STAGING_DIR)/lib/ejabberd-26.07/priv/img/favicon.png
 
 .PHONY: maerxmppserver_service_finalize
-maerxmppserver_service_finalize:
+# spksrc creates the generic installer as a final-package dependency, not as a
+# SERVICE_FILES dependency.  Make the generated file an explicit prerequisite
+# so this post-service hook patches it only after creation, including with -j.
+maerxmppserver_service_finalize: $(DSM_SCRIPTS_DIR)/installer
 	chmod 755 $(DSM_SCRIPTS_DIR)/service-setup
 	test -x $(DSM_SCRIPTS_DIR)/service-setup
+	@if grep -F -q 'Failed $${FUNC} (status $${FUNC_STATUS})' $(DSM_SCRIPTS_DIR)/installer; then \
+		echo "MAER installer fail-closed patch already applied"; \
+	else \
+		patch --batch --forward --fuzz=0 --no-backup-if-mismatch -d $(DSM_SCRIPTS_DIR) -p0 < $(CURDIR)/src/installer-fail-closed.patch; \
+	fi
+	grep -F -q 'FUNC_STATUS=0' $(DSM_SCRIPTS_DIR)/installer
+	grep -F -q 'exit "$${FUNC_STATUS}"' $(DSM_SCRIPTS_DIR)/installer
+	! grep -F -q 'eval $${FUNC} 2>&1 | $${LOG}' $(DSM_SCRIPTS_DIR)/installer
 
 .PHONY: maerxmppserver_runtime_finalize
 maerxmppserver_runtime_finalize:

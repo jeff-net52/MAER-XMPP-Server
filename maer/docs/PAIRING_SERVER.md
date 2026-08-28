@@ -14,9 +14,11 @@ uniquement au poste capable de signer la consultation avec la clé Ed25519
 ## Activation
 
 Le fragment [`../config/ejabberd.pairing.yml.example`](../config/ejabberd.pairing.yml.example)
-montre les deux éléments requis :
+montre les trois éléments requis :
 
 ```yaml
+oauth_access: local
+
 listen:
   -
     port: 5443
@@ -28,6 +30,11 @@ listen:
 modules:
   mod_maer_pairing: {}
 ```
+
+La règle d'accès `local` doit autoriser uniquement les comptes du virtual host
+local. La valeur ejabberd par défaut de `oauth_access` est `none` : dans ce cas,
+l'inspection du QR réussit mais l'approbation échoue lors de l'émission du jeton.
+Il ne faut jamais utiliser `oauth_access: all` pour contourner ce refus.
 
 Le chemin externe est `https://xmpp.maer.fr/maer-pairing/v1`. Dans le profil
 Synology canonique, le listener 5443 est lié à `127.0.0.1` et rejoint uniquement

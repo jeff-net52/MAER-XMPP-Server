@@ -3,7 +3,7 @@
     "step_title": "Messagerie du portail MAER Chat",
     "items": [
       {
-        "desc": "Le portail utilisateur envoie les confirmations depuis no-reply@maer.fr via le relais TLS Yulpa. Saisissez le mot de passe de cette boîte ; il sera enregistré dans un fichier privé du paquet (mode 0600) et jamais dans ejabberd.yml."
+        "desc": "Le portail utilisateur envoie les confirmations depuis no-reply@maer.fr via le relais TLS Yulpa. Laissez le champ vide pour conserver le secret SMTP existant, ou saisissez un nouveau mot de passe d'au moins 12 caractères pour le remplacer. Il sera enregistré dans un fichier privé du paquet (mode 0600) et jamais dans ejabberd.yml."
       },
       {
         "type": "password",
@@ -13,9 +13,7 @@
             "key": "wizard_smtp_password",
             "desc": "Mot de passe",
             "validator": {
-              "allowBlank": false,
-              "minLength": 12,
-              "maxLength": 4094
+              "allowBlank": true
             }
           }
         ]

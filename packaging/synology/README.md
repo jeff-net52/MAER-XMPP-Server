@@ -10,7 +10,7 @@ sur un NAS.
 |---|---|
 | Identifiant | `maerxmppserver` |
 | Nom affiché | `MAER XMPP Server` |
-| Version SPK | `26.07.0-9` |
+| Version SPK | `26.07.0-11` |
 | Architecture | `armada38x` uniquement |
 | DSM minimal | `7.2-72806` |
 | Compte de service | `sc-maerxmppserver`, jamais `root` |
@@ -44,17 +44,23 @@ Le code en lecture seule est installé sous
 | `run` | PID ejabberd | `0700` |
 | `upload` | pièces jointes HTTP Upload | `0700`; fichiers `0600` |
 
-La révision 9 accepte une seule migration en place : depuis `26.07.0-8`.
-Elle conserve les comptes, les données XMPP et les uploads, sauvegarde
-`ejabberd.yml` sous `ejabberd.yml.pre-26.07.0-9`, puis installe atomiquement le
-profil canonique rev9. Toute autre version source est refusée. Une installation
-neuve continue d'exiger un répertoire de données vide afin de ne jamais adopter
-silencieusement un état étranger au paquet.
+La révision 11 accepte trois migrations en place : depuis `26.07.0-8`,
+`26.07.0-9` et `26.07.0-10`. Elle conserve les comptes, les données XMPP, les
+uploads et tout secret SMTP rev9/rev10 valide, sauvegarde `ejabberd.yml` sous
+`ejabberd.yml.pre-26.07.0-11`, puis installe atomiquement le profil canonique
+rev11. Toute autre version source est refusée. Une installation neuve continue
+d'exiger un répertoire de données vide afin de ne jamais adopter silencieusement
+un état étranger au paquet.
 
 Le mot de passe de `no-reply@maer.fr` est demandé par l'assistant DSM à
-l'installation ou pendant la migration rev8 → rev9. Il est écrit uniquement
+l'installation ou pendant une migration prise en charge. Il est écrit uniquement
 dans `var/config/smtp-password` en mode `0600`; il n'apparaît ni dans
-`ejabberd.yml`, ni dans les journaux, ni dans le dépôt.
+`ejabberd.yml`, ni dans les journaux, ni dans le dépôt. Lors d'une migration
+rev9/rev10 → rev11 sans nouvelle valeur transmise, le secret régulier existant
+est conservé après validation de sa taille et de son mode. L'assistant de mise à
+niveau ne combine volontairement pas le champ facultatif avec les contraintes
+DSM `minLength`/`maxLength` : les valeurs non vides restent contrôlées côté
+service entre 12 et 4094 caractères avant toute modification.
 
 Le service fixe `HOME` au répertoire d'état privé du paquet. Certaines voies de
 lancement DSM omettent cette variable ; Erlang ne peut alors ni localiser ni
@@ -146,7 +152,7 @@ CSRF à usage borné. Les tentatives de connexion et les envois email sont
 limités par IP et par compte.
 
 L'assistant DSM demande le mot de passe SMTP pendant une installation neuve ou
-la migration rev8 → rev9. Le paquet le valide puis le provisionne atomiquement
+une migration prise en charge. Le paquet le valide puis le provisionne atomiquement
 dans `/var/packages/maerxmppserver/var/config/smtp-password`, sous le compte de
 service et en mode exact `0600`. Le profil canonique contient déjà :
 
@@ -261,7 +267,8 @@ Cette barrière enregistre et bloque explicitement les régressions déjà renco
 - secret SMTP placé dans le YAML, imprimé par l'installeur ou créé avec un mode autre que `0600` ;
 - assistant DSM d'installation/migration absent du SPK final, notamment si
   `src/wizard` existe mais n'est pas déclaré par `WIZARDS_DIR` dans la recette spksrc ;
-- migration rev8 → rev9 qui remplace ou supprime la base de comptes au lieu de ne rafraîchir que le profil runtime.
+- migration rev8/rev9/rev10 → rev11 qui remplace ou supprime les comptes, les uploads ou le secret SMTP au lieu de ne rafraîchir que le profil runtime.
+- hook DSM post-installation ou post-migration dont l'échec est masqué par le pipeline de journalisation du framework spksrc.
 
 Le paquet ne doit être copié sur le NAS qu'après le message
 `MAER XMPP Server release gate passed` et l'émission de son SHA-256.
@@ -334,7 +341,7 @@ make -C spk/maerxmppserver arch-armada38x-7.1
 ```
 
 Le SPK attendu est alors
-`packages/maerxmppserver_armada38x-7.1_26.07.0-9.spk`, à la racine du checkout
+`packages/maerxmppserver_armada38x-7.1_26.07.0-11.spk`, à la racine du checkout
 `spksrc`.
 
 Une seconde exécution de la même commande réassemble le paquet. Son SHA-256
@@ -361,7 +368,7 @@ Après le build, valider le SPK réel, y compris `INFO`, `conf/privilege` et les
 modes des scripts :
 
 ```powershell
-pwsh -NoProfile -File packaging/synology/tests/validate-source.ps1 -SpkPath /chemin/vers/maerxmppserver_armada38x-7.1_26.07.0-9.spk
+pwsh -NoProfile -File packaging/synology/tests/validate-source.ps1 -SpkPath /chemin/vers/maerxmppserver_armada38x-7.1_26.07.0-11.spk
 ```
 
 Les chemins locaux, UNC et `\\wsl.localhost\...` sont normalisés vers leur

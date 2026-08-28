@@ -330,8 +330,8 @@ process_https(_Path, #request{method = Method})
   when Method =:= 'POST'; Method =:= 'PUT'; Method =:= 'DELETE';
        Method =:= 'PATCH' ->
     html_response(405, [{<<"Allow">>, <<"GET, POST">>}],
-                  message_page(<<"Méthode refusée">>,
-                               <<"Cette opération n’est pas disponible.">>));
+                  message_page(<<"Méthode refusée"/utf8>>,
+                               <<"Cette opération n’est pas disponible."/utf8>>));
 process_https(_Path, _Request) ->
     not_found().
 
@@ -363,7 +363,7 @@ handle_login(#request{host = Host, ip = {IP, _}, q = Q} = Request) ->
                                      [session_cookie(SessionToken)]);
                         {error, rate_limited} ->
                             login_response(Host, IP, 429,
-                                           <<"Trop de tentatives. Réessayez plus tard.">>);
+                                           <<"Trop de tentatives. Réessayez plus tard."/utf8>>);
                         _ ->
                             login_response(Host, IP, 401,
                                            <<"Identifiant ou mot de passe incorrect.">>)
@@ -395,7 +395,7 @@ handle_options(#request{host = Host, q = Q} = Request) ->
                                   CsrfHash, Options}) of
                 {ok, _Profile} ->
                     dashboard_or_login(Request,
-                                       <<"Préférences enregistrées.">>);
+                                       <<"Préférences enregistrées."/utf8>>);
                 {error, auth} -> session_expired();
                 _ -> unavailable()
             end;
@@ -410,14 +410,14 @@ handle_email(#request{host = Host, q = Q} = Request) ->
                                   CsrfHash, Email}) of
                 {ok, _Profile} ->
                     dashboard_or_login(Request,
-                      <<"Un message de vérification a été envoyé. Le lien expire dans 24 heures.">>);
+                      <<"Un message de vérification a été envoyé. Le lien expire dans 24 heures."/utf8>>);
                 {error, invalid_email} ->
                     dashboard_or_login(Request,
                                        <<"Adresse email invalide.">>);
                 {error, rate_limited} -> rate_limited();
                 {error, mail_unavailable} ->
                     dashboard_or_login(Request,
-                      <<"L’envoi email est momentanément indisponible.">>);
+                      <<"L’envoi email est momentanément indisponible."/utf8>>);
                 {error, auth} -> session_expired();
                 _ -> unavailable()
             end;
@@ -439,8 +439,8 @@ handle_email_verification(#request{host = Host, ip = {IP, _}, q = Q} = Request) 
             case call_host(Host, {verify_email, IP, CsrfHash, Token}) of
                 ok ->
                     html_response(200, [],
-                      message_page(<<"Email vérifié">>,
-                                   <<"Votre adresse est maintenant associée au compte MAER Chat.">>));
+                      message_page(<<"Email vérifié"/utf8>>,
+                                   <<"Votre adresse est maintenant associée au compte MAER Chat."/utf8>>));
                 {error, invalid_token} -> invalid_link();
                 {error, rate_limited} -> rate_limited();
                 {error, csrf} -> bad_request();
@@ -455,14 +455,14 @@ handle_password_request(#request{host = Host, q = Q} = Request) ->
             case call_host(Host, {request_password, SessionHash, CsrfHash}) of
                 ok ->
                     dashboard_or_login(Request,
-                      <<"Un lien de confirmation a été envoyé à votre adresse vérifiée.">>);
+                      <<"Un lien de confirmation a été envoyé à votre adresse vérifiée."/utf8>>);
                 {error, email_required} ->
                     dashboard_or_login(Request,
-                      <<"Associez et vérifiez d’abord une adresse email.">>);
+                      <<"Associez et vérifiez d’abord une adresse email."/utf8>>);
                 {error, rate_limited} -> rate_limited();
                 {error, mail_unavailable} ->
                     dashboard_or_login(Request,
-                      <<"L’envoi email est momentanément indisponible.">>);
+                      <<"L’envoi email est momentanément indisponible."/utf8>>);
                 {error, auth} -> session_expired();
                 _ -> unavailable()
             end;
@@ -491,12 +491,12 @@ handle_password_change(#request{host = Host, q = Q} = Request) ->
                                   Token, Password, Confirmation}) of
                 ok ->
                     html_response(200, clear_cookies(),
-                      message_page(<<"Mot de passe modifié">>,
-                        <<"Toutes les sessions du portail ont été fermées. Vous pouvez vous reconnecter.">>));
+                      message_page(<<"Mot de passe modifié"/utf8>>,
+                        <<"Toutes les sessions du portail ont été fermées. Vous pouvez vous reconnecter."/utf8>>));
                 {error, invalid_password} ->
                     html_response(400, [],
-                      message_page(<<"Mot de passe refusé">>,
-                        <<"Utilisez au moins 12 caractères et confirmez exactement la même valeur.">>));
+                      message_page(<<"Mot de passe refusé"/utf8>>,
+                        <<"Utilisez au moins 12 caractères et confirmez exactement la même valeur."/utf8>>));
                 {error, invalid_token} -> invalid_link();
                 {error, auth} -> session_expired();
                 _ -> unavailable()
@@ -1239,11 +1239,11 @@ csp() ->
 
 not_found() ->
     html_response(404, [], message_page(<<"Page introuvable">>,
-                                        <<"Cette page n’existe pas.">>)).
+                                        <<"Cette page n’existe pas."/utf8>>)).
 
 bad_request() ->
-    html_response(400, [], message_page(<<"Requête refusée">>,
-                                        <<"Rechargez la page puis réessayez.">>)).
+    html_response(400, [], message_page(<<"Requête refusée"/utf8>>,
+                                        <<"Rechargez la page puis réessayez."/utf8>>)).
 
 unavailable() ->
     html_response(503, [], message_page(<<"Service indisponible">>,
@@ -1252,21 +1252,21 @@ unavailable() ->
 rate_limited() ->
     html_response(429, [{<<"Retry-After">>, <<"3600">>}],
                   message_page(<<"Trop de demandes">>,
-                               <<"Réessayez dans quelques instants.">>)).
+                               <<"Réessayez dans quelques instants."/utf8>>)).
 
 preauth_rate_limited() ->
     html_response(429, [{<<"Retry-After">>, integer_to_binary(?PREAUTH_TTL)}],
                   message_page(<<"Trop de pages ouvertes">>,
-                    <<"Fermez les anciens onglets ou réessayez dans quelques minutes.">>)).
+                    <<"Fermez les anciens onglets ou réessayez dans quelques minutes."/utf8>>)).
 
 session_expired() ->
     html_response(401, clear_cookies(),
-                  message_page(<<"Session expirée">>,
+                  message_page(<<"Session expirée"/utf8>>,
                                <<"Reconnectez-vous pour continuer.">>)).
 
 invalid_link() ->
     html_response(400, [], message_page(<<"Lien invalide">>,
-      <<"Ce lien est expiré, déjà utilisé ou ne correspond plus à la demande active.">>)).
+      <<"Ce lien est expiré, déjà utilisé ou ne correspond plus à la demande active."/utf8>>)).
 
 %%%===================================================================
 %%% HTML rendering
@@ -1308,7 +1308,7 @@ dashboard_response(User, Profile, Csrf, MailEnabled, Message) ->
          "<form method=\"post\" action=\"/account/logout\">">>,
        hidden_csrf(Csrf),
        <<"<button class=\"quiet\" type=\"submit\">Se déconnecter</button>"
-         "</form></div>">>,
+         "</form></div>"/utf8>>,
        notice(Message),
        <<"<div class=\"grid\"><section class=\"card\"><h2>Adresse email</h2>">>,
        email_status(Email, Pending, Verified),
@@ -1317,11 +1317,11 @@ dashboard_response(User, Profile, Csrf, MailEnabled, Message) ->
        <<"<label for=\"email\">Nouvelle adresse</label>"
          "<input id=\"email\" name=\"email\" type=\"email\" required "
          "maxlength=\"254\" autocomplete=\"email\" placeholder=\"vous@exemple.fr\"">>,
-       disabled_submit(<<"Envoyer le lien de vérification">>, MailEnabled),
+       disabled_submit(<<"Envoyer le lien de vérification"/utf8>>, MailEnabled),
        <<"</form></section><section class=\"card\"><h2>Sécurité</h2>"
          "<p>Le changement de mot de passe exige un lien envoyé à l’adresse vérifiée. "
          "Le nouveau mot de passe n’est jamais placé dans l’email.</p>"
-         "<form method=\"post\" action=\"/account/password\">">>,
+         "<form method=\"post\" action=\"/account/password\">"/utf8>>,
        hidden_csrf(Csrf),
        disabled_submit(<<"Confirmer par email">>,
                        MailEnabled andalso Verified andalso Email =/= undefined),
@@ -1329,29 +1329,29 @@ dashboard_response(User, Profile, Csrf, MailEnabled, Message) ->
          "<section class=\"card preferences\"><h2>Préférences de services</h2>"
          "<p class=\"muted\">Aucune facturation n’est activée. Ces choix préparent "
          "les services visibles dans les clients MAER Chat compatibles.</p>"
-         "<form method=\"post\" action=\"/account/options\">">>,
+         "<form method=\"post\" action=\"/account/options\">"/utf8>>,
        hidden_csrf(Csrf),
        feature_toggle(<<"audio">>, <<"Appels audio">>,
-                      <<"Autoriser les fonctions d’appel vocal.">>,
+                      <<"Autoriser les fonctions d’appel vocal."/utf8>>,
                       maps:get(audio, Profile, false)),
-       feature_toggle(<<"video">>, <<"Appels vidéo">>,
-                      <<"Autoriser les fonctions d’appel avec caméra.">>,
+       feature_toggle(<<"video">>, <<"Appels vidéo"/utf8>>,
+                      <<"Autoriser les fonctions d’appel avec caméra."/utf8>>,
                       maps:get(video, Profile, false)),
-       feature_toggle(<<"screen_share">>, <<"Partage d’écran">>,
-                      <<"Autoriser la proposition de partage d’écran.">>,
+       feature_toggle(<<"screen_share">>, <<"Partage d’écran"/utf8>>,
+                      <<"Autoriser la proposition de partage d’écran."/utf8>>,
                       maps:get(screen_share, Profile, false)),
        feature_toggle(<<"assistance">>, <<"MAER Assistance">>,
-                      <<"Afficher l’accès aux services d’assistance MAER.">>,
+                      <<"Afficher l’accès aux services d’assistance MAER."/utf8>>,
                       maps:get(assistance, Profile, false)),
        feature_toggle(<<"password_manager">>,
                       <<"Gestionnaire de mots de passe">>,
-                      <<"Afficher l’intégration au gestionnaire de mots de passe.">>,
+                      <<"Afficher l’intégration au gestionnaire de mots de passe."/utf8>>,
                       maps:get(password_manager, Profile, false)),
        <<"<button class=\"primary\" type=\"submit\">Enregistrer les préférences</button>"
-         "</form></section>">>]).
+         "</form></section>"/utf8>>]).
 
 email_status(undefined, undefined, _Verified) ->
-    <<"<p class=\"status neutral\">Aucune adresse associée.</p>">>;
+    <<"<p class=\"status neutral\">Aucune adresse associée.</p>"/utf8>>;
 email_status(Email, Pending, Verified) ->
     [case Email of
          undefined -> <<>>;
@@ -1359,28 +1359,28 @@ email_status(Email, Pending, Verified) ->
                case Verified of true -> <<"success">>; false -> <<"neutral">> end,
                <<"\">Adresse actuelle : <strong>">>, html_escape(Email),
                case Verified of
-                   true -> <<"</strong> · vérifiée</p>">>;
-                   false -> <<"</strong> · non vérifiée</p>">>
+                   true -> <<"</strong> · vérifiée</p>"/utf8>>;
+                   false -> <<"</strong> · non vérifiée</p>"/utf8>>
                end]
      end,
      case Pending of
          undefined -> <<>>;
-         _ -> [<<"<p class=\"status pending\">Vérification en attente : <strong>">>,
+         _ -> [<<"<p class=\"status pending\">Vérification en attente : <strong>"/utf8>>,
                html_escape(Pending), <<"</strong></p>">>]
      end].
 
 verify_email_page(Csrf) ->
-    page(<<"Vérifier mon email">>,
+    page(<<"Vérifier mon email"/utf8>>,
       [<<"<section class=\"card auth-card\"><h1>Vérifier mon email</h1>"
          "<p>Le jeton reste dans votre navigateur et n’apparaît pas dans les logs du serveur.</p>"
-         "<form method=\"post\" action=\"/account/verify-email\" data-fragment-form>">>,
+         "<form method=\"post\" action=\"/account/verify-email\" data-fragment-form>"/utf8>>,
        hidden_csrf(Csrf),
        <<"<input type=\"hidden\" name=\"token\" data-fragment-token>"
          "<noscript><p class=\"status pending\">JavaScript est nécessaire pour lire "
          "le jeton protégé placé dans le fragment du lien.</p></noscript>"
          "<p class=\"status neutral\" data-fragment-status>Lecture du lien…</p>"
          "<button class=\"primary\" type=\"submit\" disabled data-fragment-submit>"
-         "Vérifier l’adresse</button></form></section>">>]).
+         "Vérifier l’adresse</button></form></section>"/utf8>>]).
 
 password_page(User, Csrf) ->
     page(<<"Nouveau mot de passe">>,
@@ -1389,7 +1389,7 @@ password_page(User, Csrf) ->
        <<"@xmpp.maer.fr</h1><p>Saisissez le nouveau mot de passe après avoir ouvert "
          "le lien reçu par email.</p>"
          "<form method=\"post\" action=\"/account/password/confirm\" "
-         "data-fragment-form autocomplete=\"off\">">>,
+         "data-fragment-form autocomplete=\"off\">"/utf8>>,
        hidden_csrf(Csrf),
        <<"<input type=\"hidden\" name=\"token\" data-fragment-token>"
          "<noscript><p class=\"status pending\">JavaScript est nécessaire pour lire "
@@ -1402,14 +1402,14 @@ password_page(User, Csrf) ->
          "required minlength=\"12\" maxlength=\"1024\" autocomplete=\"new-password\">"
          "<p class=\"status neutral\" data-fragment-status>Lecture du lien…</p>"
          "<button class=\"primary\" type=\"submit\" disabled data-fragment-submit>"
-         "Changer le mot de passe</button></form></section>">>]).
+         "Changer le mot de passe</button></form></section>"/utf8>>]).
 
 message_page(Title, Message) ->
     page(Title,
       [<<"<section class=\"card auth-card\"><h1>">>, html_escape(Title),
        <<"</h1><p>">>, html_escape(Message),
        <<"</p><p><a class=\"button-link\" href=\"/account/\">Retour à mon compte</a>"
-         "</p></section>">>]).
+         "</p></section>"/utf8>>]).
 
 page(Title, Content) ->
     iolist_to_binary(
@@ -1422,8 +1422,8 @@ page(Title, Content) ->
          "<script src=\"/account/assets/portal.js\" defer></script></head><body>"
          "<header class=\"site-header\"><a href=\"/account/\" aria-label=\"MAER Chat — accueil\">"
          "<img src=\"/account/assets/logo.png\" alt=\"MAER Chat\"></a></header>"
-         "<main id=\"main\">">>, Content,
-       <<"</main><footer>MAER Chat · Messagerie privée</footer></body></html>">>]).
+         "<main id=\"main\">"/utf8>>, Content,
+       <<"</main><footer>MAER Chat · Messagerie privée</footer></body></html>"/utf8>>]).
 
 notice(undefined) -> <<>>;
 notice(<<>>) -> <<>>;
@@ -1440,7 +1440,7 @@ disabled_submit(Label, true) ->
 disabled_submit(Label, false) ->
     [<<"<button class=\"primary\" type=\"submit\" disabled>">>,
      html_escape(Label), <<"</button>"
-       "<p class=\"hint\">La messagerie email doit être configurée par l’opérateur.</p>">>].
+       "<p class=\"hint\">La messagerie email doit être configurée par l’opérateur.</p>"/utf8>>].
 
 feature_toggle(Name, Label, Description, Checked) ->
     [<<"<label class=\"toggle\"><span><strong>">>, html_escape(Label),
@@ -1565,6 +1565,20 @@ password_policy_test() ->
 
 html_escape_test() ->
     ?assertEqual(<<"&lt;&amp;&quot;&#39;&gt;">>, html_escape(<<"<&\"'>">>)).
+
+rendered_static_html_is_utf8_without_controls_test() ->
+    Html = page(<<"Connexion">>, []),
+    ?assert(is_list(unicode:characters_to_list(Html, utf8))),
+    ControlBytes =
+        [Byte || <<Byte>> <= Html,
+                 (Byte < 16#20 andalso Byte =/= $\t andalso
+                  Byte =/= $\n andalso Byte =/= $\r) orelse Byte =:= 16#7F],
+    ?assertEqual([], ControlBytes),
+    ?assertNotEqual(nomatch,
+                    binary:match(Html, <<"MAER Chat — accueil"/utf8>>)),
+    ?assertNotEqual(
+       nomatch,
+       binary:match(Html, <<"MAER Chat · Messagerie privée"/utf8>>)).
 
 cookie_parse_test() ->
     Request = #request{headers = [{<<"Cookie">>,

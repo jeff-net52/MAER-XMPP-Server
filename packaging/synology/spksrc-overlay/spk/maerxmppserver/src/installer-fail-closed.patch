@@ -1,0 +1,41 @@
+--- installer
++++ installer
+@@ -37,19 +37,36 @@
+         install_log "Begin ${FUNC}"
+         LOG=$2
+         ARG=$3
++        FUNC_STATUS=0
+         if [ -z "${LOG}" ]; then
+             if [ -z "${ARG}" ]; then
+                 eval ${FUNC}
+             else
+                 eval ${FUNC} ${ARG}
+             fi
++            FUNC_STATUS=$?
+         else
+             if [ -z "${ARG}" ]; then
+-                eval ${FUNC} 2>&1 | ${LOG}
++                FUNC_OUTPUT=$(eval ${FUNC} 2>&1)
+             else
+-                eval ${FUNC} ${ARG} 2>&1 | ${LOG}
++                FUNC_OUTPUT=$(eval ${FUNC} ${ARG} 2>&1)
++            fi
++            FUNC_STATUS=$?
++            if [ -n "${FUNC_OUTPUT}" ]; then
++                printf '%s\n' "${FUNC_OUTPUT}" | ${LOG}
++                LOG_STATUS=$?
++            else
++                LOG_STATUS=0
++            fi
++            unset FUNC_OUTPUT
++            if [ "${FUNC_STATUS}" -eq 0 ] && [ "${LOG_STATUS}" -ne 0 ]; then
++                FUNC_STATUS=${LOG_STATUS}
+             fi
+         fi
++        if [ "${FUNC_STATUS}" -ne 0 ]; then
++            install_log "Failed ${FUNC} (status ${FUNC_STATUS})"
++            exit "${FUNC_STATUS}"
++        fi
+         install_log "End ${FUNC}"
+     fi
+ }

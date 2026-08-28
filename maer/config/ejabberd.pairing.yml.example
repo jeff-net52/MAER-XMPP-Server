@@ -8,6 +8,12 @@
 hosts:
   - xmpp.maer.fr
 
+### L'émission du jeton OAuth doit être autorisée pour les seuls comptes du
+### virtual host local. La valeur ejabberd par défaut (`none`) laisse
+### l'inspection QR fonctionner mais fait échouer toute approbation. Ne jamais
+### remplacer cette règle locale par `all`.
+oauth_access: local
+
 ### Le handler d'association doit être placé uniquement sur le backend HTTPS
 ### loopback publié par le reverse proxy canonique 443. Ne jamais le monter sur
 ### le listener d'administration (5280) ni ouvrir directement 5443.

@@ -159,7 +159,7 @@ replace_default_file()
 backup_upgrade_configuration()
 {
     target_file="${CONFIG_DIR}/ejabberd.yml"
-    backup_file="${CONFIG_DIR}/ejabberd.yml.pre-26.07.0-9"
+    backup_file="${CONFIG_DIR}/ejabberd.yml.pre-26.07.0-11"
 
     if [ ! -f "${target_file}" ] || [ -L "${target_file}" ]; then
         echo "Cannot back up the installed ejabberd configuration safely." >&2
@@ -186,7 +186,7 @@ validate_smtp_password_input()
 
     # A blank value is permitted only when an existing regular secret is
     # already in place (for example a later maintenance upgrade).  Fresh
-    # installs and the revision-8 migration wizard require a value.
+    # installs and upgrades without an existing rev9/rev10 secret require a value.
     if [ -z "${secret_value}" ]; then
         if [ -f "${secret_file}" ] && [ ! -L "${secret_file}" ]; then
             if [ ! -s "${secret_file}" ]; then
@@ -246,18 +246,29 @@ install_smtp_password()
 
 validate_preinst()
 {
+    # During an upgrade DSM runs the new package's preinst after the old
+    # package's preupgrade has already validated the retained runtime.  At
+    # this point /var/packages/<package>/var is temporarily unavailable, so
+    # neither the retained SMTP secret nor the account data can be inspected
+    # here.  Defer the second SMTP check to service_postupgrade, once DSM has
+    # restored the package data directory.  Fresh installs must still satisfy
+    # every check below.
+    if [ "${SYNOPKG_PKG_STATUS:-}" = 'UPGRADE' ]; then
+        return 0
+    fi
+
     # A retained var directory could contain the vulnerable configuration or
-    # account database from an older incompatible revision.  Revision 9 only
-    # supports a narrowly validated upgrade from revision 8; a new installation
-    # must still begin with an empty package data directory.
+    # account database from an older incompatible revision.  Revision 11 only
+    # supports narrowly validated upgrades from revisions 8, 9 and 10; a new
+    # installation must still begin with an empty package data directory.
     if [ -d "${MAER_VAR_DIR}" ]; then
         legacy_entry=$(find "${MAER_VAR_DIR}" -mindepth 1 -maxdepth 1 -print -quit) || {
             echo "Cannot inspect retained package data; refusing installation." >&2
             exit 1
         }
         if [ -n "${legacy_entry}" ]; then
-            echo "MAER XMPP Server 26.07.0-9 requires an empty package data directory." >&2
-            echo "Remove the previous package and its retained data, then install revision 9 cleanly." >&2
+            echo "MAER XMPP Server 26.07.0-11 requires an empty package data directory." >&2
+            echo "Remove the previous package and its retained data, then install revision 11 cleanly." >&2
             exit 1
         fi
     fi
@@ -266,11 +277,14 @@ validate_preinst()
 
 validate_preupgrade()
 {
-    if [ "${SYNOPKG_OLD_PKGVER:-}" != "26.07.0-8" ]; then
-        echo "MAER XMPP Server 26.07.0-9 only supports an in-place upgrade from 26.07.0-8." >&2
-        echo "Export any required backup and perform a clean installation for every other source version." >&2
-        exit 1
-    fi
+    case "${SYNOPKG_OLD_PKGVER:-}" in
+        26.07.0-8|26.07.0-9|26.07.0-10) ;;
+        *)
+            echo "MAER XMPP Server 26.07.0-11 only supports in-place upgrades from 26.07.0-8, 26.07.0-9 or 26.07.0-10." >&2
+            echo "Export any required backup and perform a clean installation for every other source version." >&2
+            exit 1
+            ;;
+    esac
 
     if ! validate_runtime_root; then
         echo "The installed package data directory is missing or unsafe; refusing upgrade." >&2
@@ -289,21 +303,31 @@ validate_preupgrade()
 
 service_postinst()
 {
+    # DSM also invokes postinst during an upgrade, before the retained package
+    # data is restored for postupgrade.  Only the dedicated upgrade hook may
+    # refresh the canonical defaults or reconcile the retained SMTP secret.
+    if [ "${SYNOPKG_PKG_STATUS:-}" = 'UPGRADE' ]; then
+        return 0
+    fi
+
     install_runtime_defaults || exit 1
     install_smtp_password || exit 1
 }
 
 service_postupgrade()
 {
-    if [ "${SYNOPKG_OLD_PKGVER:-}" != "26.07.0-8" ]; then
-        echo "Unexpected source version during MAER XMPP Server upgrade." >&2
-        exit 1
-    fi
+    case "${SYNOPKG_OLD_PKGVER:-}" in
+        26.07.0-8|26.07.0-9|26.07.0-10) ;;
+        *)
+            echo "Unexpected source version during MAER XMPP Server upgrade." >&2
+            exit 1
+            ;;
+    esac
 
     # SQL/Mnesia account state stays in MAER_VAR_DIR and is intentionally left
-    # untouched.  Only the canonical runtime profile is refreshed so revision 9
-    # can enable the MAER portal and the corrected fail2ban policy.  Keep one
-    # local recovery copy of the revision-8 configuration.
+    # untouched.  Only the canonical runtime profile is refreshed so revision
+    # 11 can apply the repair-safe SMTP wizard fix.  Keep one local recovery
+    # copy of the installed revision-8, revision-9 or revision-10 configuration.
     ensure_runtime_layout || exit 1
     backup_upgrade_configuration || exit 1
     replace_default_file ejabberd.yml || exit 1

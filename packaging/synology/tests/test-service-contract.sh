@@ -188,6 +188,22 @@ mkdir -p "${clean_install_var}"
     validate_preinst
 ) || fail_test 'empty package data directory was rejected'
 
+# DSM executes the new revision's preinst while the retained package data is
+# temporarily unavailable.  A supported upgrade must not require the blank
+# wizard field at this stage; service_postupgrade validates and preserves the
+# existing secret after DSM restores the runtime directory.
+transient_upgrade_var="${TEST_ROOT}/transient-upgrade-var"
+(
+    . "${SOURCE_SETUP}"
+    MAER_VAR_DIR="${transient_upgrade_var}"
+    CONFIG_DIR="${transient_upgrade_var}/config"
+    SYNOPKG_PKG_STATUS='UPGRADE'
+    unset wizard_smtp_password || true
+    validate_preinst
+    service_postinst
+) || fail_test 'upgrade preinst/postinst rejected a blank SMTP field before retained data was restored'
+[ ! -e "${transient_upgrade_var}" ] || fail_test 'upgrade postinst created runtime state before DSM restored retained data'
+
 missing_secret_var="${TEST_ROOT}/missing-secret-var"
 mkdir -p "${missing_secret_var}"
 if (
@@ -216,6 +232,20 @@ then
 fi
 grep -q 'SMTP password is too short' "${TEST_ROOT}/short-secret.out" || fail_test 'short SMTP password refusal is not explicit'
 
+long_secret_var="${TEST_ROOT}/long-secret-var"
+mkdir -p "${long_secret_var}"
+if (
+    . "${SOURCE_SETUP}"
+    MAER_VAR_DIR="${long_secret_var}"
+    CONFIG_DIR="${long_secret_var}/config"
+    wizard_smtp_password=$(awk 'BEGIN { for (i = 0; i < 4095; i++) printf "x" }')
+    validate_preinst
+) >"${TEST_ROOT}/long-secret.out" 2>&1
+then
+    fail_test 'clean installation accepted an oversized SMTP password'
+fi
+grep -q 'SMTP password is too long' "${TEST_ROOT}/long-secret.out" || fail_test 'oversized SMTP password refusal is not explicit'
+
 mkdir -p "${clean_install_var}/config"
 printf '%s\n' 'legacy profile fixture' > "${clean_install_var}/config/ejabberd.yml"
 if (
@@ -228,50 +258,79 @@ then
 fi
 grep -q 'requires an empty package data directory' "${TEST_ROOT}/retained-data.out" || fail_test 'retained-data refusal is not explicit'
 
-upgrade_var="${TEST_ROOT}/upgrade-var"
-upgrade_var_link="${TEST_ROOT}/upgrade-var-link"
-upgrade_defaults="${TEST_ROOT}/upgrade-defaults"
-mkdir -p "${upgrade_var}/config" "${upgrade_var}/data" "${upgrade_var}/log" \
-    "${upgrade_var}/run" "${upgrade_var}/upload" "${upgrade_var}/certs" \
-    "${upgrade_defaults}"
-ln -s "${upgrade_var}" "${upgrade_var_link}"
-printf '%s\n' 'revision-8-profile' > "${upgrade_var}/config/ejabberd.yml"
-printf '%s\n' 'revision-8-control' > "${upgrade_var}/config/ejabberdctl.cfg"
-printf '%s\n' 'revision-8-inet' > "${upgrade_var}/config/inetrc"
-printf '%s\n' 'account-database-marker' > "${upgrade_var}/data/ejabberd.sqlite"
-printf '%s\n' 'revision-9-profile' > "${upgrade_defaults}/ejabberd.yml"
-printf '%s\n' 'revision-9-control' > "${upgrade_defaults}/ejabberdctl.cfg"
-printf '%s\n' 'revision-9-inet' > "${upgrade_defaults}/inetrc"
+run_supported_upgrade()
+{
+    source_version=$1
+    source_label=$2
+    upgrade_var="${TEST_ROOT}/upgrade-${source_label}-var"
+    upgrade_var_link="${TEST_ROOT}/upgrade-${source_label}-var-link"
+    upgrade_defaults="${TEST_ROOT}/upgrade-${source_label}-defaults"
+    upgrade_output="${TEST_ROOT}/upgrade-${source_label}.out"
 
-(
-    . "${SOURCE_SETUP}"
-    SYNOPKG_OLD_PKGVER=26.07.0-8
-    SYNOPKG_PKGVAR="${upgrade_var}"
-    MAER_VAR_DIR="${upgrade_var_link}"
-    MAER_DEFAULTS_DIR="${upgrade_defaults}"
-    CONFIG_DIR="${upgrade_var_link}/config"
-    LOGS_DIR="${upgrade_var_link}/log"
-    SPOOL_DIR="${upgrade_var_link}/data"
-    wizard_smtp_password='TestOnly-Smtp-Secret-42'
-    export SYNOPKG_OLD_PKGVER SYNOPKG_PKGVAR MAER_VAR_DIR MAER_DEFAULTS_DIR CONFIG_DIR LOGS_DIR SPOOL_DIR wizard_smtp_password
-    validate_preupgrade
-    service_postupgrade
-) >"${TEST_ROOT}/upgrade.out" 2>&1 || {
-    sed 's/^/upgrade output: /' "${TEST_ROOT}/upgrade.out" >&2
-    fail_test 'validated revision-8 upgrade failed'
+    mkdir -p "${upgrade_var}/config" "${upgrade_var}/data" "${upgrade_var}/log" \
+        "${upgrade_var}/run" "${upgrade_var}/upload" "${upgrade_var}/certs" \
+        "${upgrade_defaults}"
+    ln -s "${upgrade_var}" "${upgrade_var_link}"
+    printf '%s\n' "${source_label}-profile" > "${upgrade_var}/config/ejabberd.yml"
+    printf '%s\n' "${source_label}-control" > "${upgrade_var}/config/ejabberdctl.cfg"
+    printf '%s\n' "${source_label}-inet" > "${upgrade_var}/config/inetrc"
+    printf '%s\n' "${source_label}-account-database-marker" > "${upgrade_var}/data/ejabberd.sqlite"
+    printf '%s\n' "${source_label}-upload-marker" > "${upgrade_var}/upload/attachment.bin"
+    printf '%s\n' 'revision-11-profile' > "${upgrade_defaults}/ejabberd.yml"
+    printf '%s\n' 'revision-11-control' > "${upgrade_defaults}/ejabberdctl.cfg"
+    printf '%s\n' 'revision-11-inet' > "${upgrade_defaults}/inetrc"
+
+    if [ "${source_version}" != '26.07.0-8' ]; then
+        existing_secret="Existing-${source_label}-Smtp-42"
+        printf '%s\n' "${existing_secret}" > "${upgrade_var}/config/smtp-password"
+        chmod 600 "${upgrade_var}/config/smtp-password"
+    fi
+
+    (
+        . "${SOURCE_SETUP}"
+        SYNOPKG_OLD_PKGVER="${source_version}"
+        SYNOPKG_PKGVAR="${upgrade_var}"
+        MAER_VAR_DIR="${upgrade_var_link}"
+        MAER_DEFAULTS_DIR="${upgrade_defaults}"
+        CONFIG_DIR="${upgrade_var_link}/config"
+        LOGS_DIR="${upgrade_var_link}/log"
+        SPOOL_DIR="${upgrade_var_link}/data"
+        export SYNOPKG_OLD_PKGVER SYNOPKG_PKGVAR MAER_VAR_DIR MAER_DEFAULTS_DIR CONFIG_DIR LOGS_DIR SPOOL_DIR
+        if [ "${source_version}" = '26.07.0-8' ]; then
+            wizard_smtp_password='TestOnly-Smtp-Secret-42'
+            export wizard_smtp_password
+        else
+            unset wizard_smtp_password || true
+        fi
+        validate_preupgrade
+        service_postupgrade
+    ) >"${upgrade_output}" 2>&1 || {
+        sed 's/^/upgrade output: /' "${upgrade_output}" >&2
+        fail_test "validated ${source_label} upgrade failed"
+    }
+
+    grep -q '^revision-11-profile$' "${upgrade_var}/config/ejabberd.yml" || fail_test "${source_label} upgrade profile was not refreshed"
+    grep -q "^${source_label}-profile$" "${upgrade_var}/config/ejabberd.yml.pre-26.07.0-11" || fail_test "${source_label} profile backup is missing"
+    grep -q '^revision-11-control$' "${upgrade_var}/config/ejabberdctl.cfg" || fail_test "${source_label} control defaults were not refreshed"
+    grep -q '^revision-11-inet$' "${upgrade_var}/config/inetrc" || fail_test "${source_label} inet defaults were not refreshed"
+    grep -q "^${source_label}-account-database-marker$" "${upgrade_var}/data/ejabberd.sqlite" || fail_test "${source_label} account database changed during upgrade"
+    grep -q "^${source_label}-upload-marker$" "${upgrade_var}/upload/attachment.bin" || fail_test "${source_label} upload changed during upgrade"
+    [ "$(stat -c '%a' "${upgrade_var}/config/ejabberd.yml")" = '600' ] || fail_test "${source_label} profile permissions are not 0600"
+    if [ "${source_version}" = '26.07.0-8' ]; then
+        expected_secret='TestOnly-Smtp-Secret-42'
+    else
+        expected_secret="Existing-${source_label}-Smtp-42"
+    fi
+    grep -q "^${expected_secret}$" "${upgrade_var}/config/smtp-password" || fail_test "${source_label} SMTP password was not retained or installed"
+    [ "$(stat -c '%a' "${upgrade_var}/config/smtp-password")" = '600' ] || fail_test "${source_label} SMTP password permissions are not 0600"
+    if grep -q "${expected_secret}" "${upgrade_output}"; then
+        fail_test "${source_label} SMTP password leaked into upgrade output"
+    fi
 }
 
-grep -q '^revision-9-profile$' "${upgrade_var}/config/ejabberd.yml" || fail_test 'upgrade profile was not refreshed'
-grep -q '^revision-8-profile$' "${upgrade_var}/config/ejabberd.yml.pre-26.07.0-9" || fail_test 'revision-8 profile backup is missing'
-grep -q '^revision-9-control$' "${upgrade_var}/config/ejabberdctl.cfg" || fail_test 'control defaults were not refreshed'
-grep -q '^revision-9-inet$' "${upgrade_var}/config/inetrc" || fail_test 'inet defaults were not refreshed'
-grep -q '^account-database-marker$' "${upgrade_var}/data/ejabberd.sqlite" || fail_test 'account database changed during upgrade'
-[ "$(stat -c '%a' "${upgrade_var}/config/ejabberd.yml")" = '600' ] || fail_test 'upgraded profile permissions are not 0600'
-grep -q '^TestOnly-Smtp-Secret-42$' "${upgrade_var}/config/smtp-password" || fail_test 'SMTP password was not installed'
-[ "$(stat -c '%a' "${upgrade_var}/config/smtp-password")" = '600' ] || fail_test 'SMTP password permissions are not 0600'
-if grep -q 'TestOnly-Smtp-Secret-42' "${TEST_ROOT}/upgrade.out"; then
-    fail_test 'SMTP password leaked into upgrade output'
-fi
+run_supported_upgrade '26.07.0-8' 'revision-8'
+run_supported_upgrade '26.07.0-9' 'revision-9'
+run_supported_upgrade '26.07.0-10' 'revision-10'
 
 mismatched_var_target="${TEST_ROOT}/mismatched-var-target"
 mismatched_var_expected="${TEST_ROOT}/mismatched-var-expected"
@@ -339,14 +398,14 @@ grep -q 'configuration is missing or unsafe' "${TEST_ROOT}/unsafe-upgrade.out" |
 if (
     . "${SOURCE_SETUP}"
     SYNOPKG_OLD_PKGVER=26.07.0-7
-    MAER_VAR_DIR="${upgrade_var}"
-    CONFIG_DIR="${upgrade_var}/config"
+    MAER_VAR_DIR="${TEST_ROOT}/upgrade-revision-10-var"
+    CONFIG_DIR="${TEST_ROOT}/upgrade-revision-10-var/config"
     export SYNOPKG_OLD_PKGVER MAER_VAR_DIR CONFIG_DIR
     validate_preupgrade
 ) >"${TEST_ROOT}/unsupported-upgrade.out" 2>&1
 then
     fail_test 'unsupported source revision was accepted'
 fi
-grep -q 'only supports an in-place upgrade from 26.07.0-8' "${TEST_ROOT}/unsupported-upgrade.out" || fail_test 'unsupported-upgrade refusal is not explicit'
+grep -q 'only supports in-place upgrades from 26.07.0-8, 26.07.0-9 or 26.07.0-10' "${TEST_ROOT}/unsupported-upgrade.out" || fail_test 'unsupported-upgrade refusal is not explicit'
 
 echo 'service contract tests passed'

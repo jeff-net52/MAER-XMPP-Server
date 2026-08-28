@@ -464,7 +464,10 @@ opt_type(websocket_origin) ->
       econf:and_then(
 	econf:and_then(
 	  econf:binary_sep("\\s+"),
-	  econf:list(econf:url(), [unique])),
+	  econf:list(
+	    econf:either(econf:enum([<<"maer-chat://app">>]),
+			 econf:url()),
+	    [unique])),
 	fun(L) -> str:join(L, <<" ">>) end),
       [unique]);
 opt_type(websocket_ping_interval) ->
@@ -879,3 +882,21 @@ fqdn(_) ->
 -spec concat_binary(char()) -> fun(([binary()]) -> binary()).
 concat_binary(C) ->
     fun(Opts) -> str:join(Opts, <<C>>) end.
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+maer_native_websocket_origin_test() ->
+    Validator = opt_type(websocket_origin),
+    ?assertEqual([<<"maer-chat://app">>],
+                 Validator([<<"maer-chat://app">>])).
+
+https_websocket_origin_remains_supported_test() ->
+    Validator = opt_type(websocket_origin),
+    ?assertEqual([<<"https://xmpp.maer.fr">>],
+                 Validator([<<"https://xmpp.maer.fr">>])).
+
+unapproved_native_websocket_origin_is_rejected_test() ->
+    Validator = opt_type(websocket_origin),
+    ?assertException(error, _, Validator([<<"other-app://app">>])).
+-endif.
