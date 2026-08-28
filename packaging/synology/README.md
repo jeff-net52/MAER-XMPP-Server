@@ -237,6 +237,14 @@ pwsh -NoProfile -File packaging/synology/tests/release-gate.ps1 -SpkPath /chemin
 Cette barrière enregistre et bloque explicitement les régressions déjà rencontrées :
 
 - décalage entre la version du nom de fichier, `INFO`, `LOCKS.json` et le contrat attendu ;
+- rejet de la racine DSM 7 canonique
+  `/var/packages/maerxmppserver/var -> ${SYNOPKG_PKGVAR}` : ce lien symbolique
+  géré par DSM est accepté uniquement s'il résout exactement vers
+  `SYNOPKG_PKGVAR`, tandis que chaque sous-chemin mutable reste soumis au refus
+  strict des liens symboliques ;
+- test de comportement qui ne reproduit pas cette topologie DSM 7 avec une
+  racine `var` symbolique, sa cible `SYNOPKG_PKGVAR`, puis des sous-chemins
+  strictement contrôlés ;
 - absence du NIF JID ou démarrage de la validation avant `application:ensure_all_started(xmpp)` ;
 - absence de `crypto_callback.so`, chargeur OpenSSL dynamique indispensable à OTP 27 ;
 - suppression abusive de `httpd_example.beam`, module runtime `inets` requis par ejabberd ;
@@ -332,6 +340,22 @@ Le SPK attendu est alors
 Une seconde exécution de la même commande réassemble le paquet. Son SHA-256
 doit rester strictement identique ; toute différence signale une entrée de
 build non déterministe et interdit la publication.
+
+### Checklist de reconstruction avant upload
+
+Avant chaque build destiné au NAS :
+
+- resynchroniser **tout** `packaging/synology/spksrc-overlay` avec
+  `prepare-overlay.sh`, puis contrôler dans le checkout `spksrc` la valeur de
+  `SPK_REV`, l'ensemble des répertoires `patches/`, `WIZARDS_DIR` et les
+  fichiers `src/wizard/` ; la recopie isolée d'un seul fichier est interdite ;
+- exécuter le build dans WSL avec un `PATH` Linux explicite et propre, sans
+  entrée `/mnt/c`, chemin Windows ni répertoire KeePassXC, puis vérifier que
+  `command -v bash make tar patch` résout uniquement dans le système Linux ;
+- après le build, lire `INFO` dans le SPK produit et vérifier que sa version et
+  sa révision correspondent à `SPK_VERS`/`SPK_REV` et au nom du fichier attendu
+  avant tout upload ; lancer ensuite `release-gate.ps1 -SpkPath ...` sur ce
+  fichier exact et conserver le SHA-256 annoncé.
 
 Après le build, valider le SPK réel, y compris `INFO`, `conf/privilege` et les
 modes des scripts :

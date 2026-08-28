@@ -229,10 +229,12 @@ fi
 grep -q 'requires an empty package data directory' "${TEST_ROOT}/retained-data.out" || fail_test 'retained-data refusal is not explicit'
 
 upgrade_var="${TEST_ROOT}/upgrade-var"
+upgrade_var_link="${TEST_ROOT}/upgrade-var-link"
 upgrade_defaults="${TEST_ROOT}/upgrade-defaults"
 mkdir -p "${upgrade_var}/config" "${upgrade_var}/data" "${upgrade_var}/log" \
     "${upgrade_var}/run" "${upgrade_var}/upload" "${upgrade_var}/certs" \
     "${upgrade_defaults}"
+ln -s "${upgrade_var}" "${upgrade_var_link}"
 printf '%s\n' 'revision-8-profile' > "${upgrade_var}/config/ejabberd.yml"
 printf '%s\n' 'revision-8-control' > "${upgrade_var}/config/ejabberdctl.cfg"
 printf '%s\n' 'revision-8-inet' > "${upgrade_var}/config/inetrc"
@@ -244,13 +246,14 @@ printf '%s\n' 'revision-9-inet' > "${upgrade_defaults}/inetrc"
 (
     . "${SOURCE_SETUP}"
     SYNOPKG_OLD_PKGVER=26.07.0-8
-    MAER_VAR_DIR="${upgrade_var}"
+    SYNOPKG_PKGVAR="${upgrade_var}"
+    MAER_VAR_DIR="${upgrade_var_link}"
     MAER_DEFAULTS_DIR="${upgrade_defaults}"
-    CONFIG_DIR="${upgrade_var}/config"
-    LOGS_DIR="${upgrade_var}/log"
-    SPOOL_DIR="${upgrade_var}/data"
+    CONFIG_DIR="${upgrade_var_link}/config"
+    LOGS_DIR="${upgrade_var_link}/log"
+    SPOOL_DIR="${upgrade_var_link}/data"
     wizard_smtp_password='TestOnly-Smtp-Secret-42'
-    export SYNOPKG_OLD_PKGVER MAER_VAR_DIR MAER_DEFAULTS_DIR CONFIG_DIR LOGS_DIR SPOOL_DIR wizard_smtp_password
+    export SYNOPKG_OLD_PKGVER SYNOPKG_PKGVAR MAER_VAR_DIR MAER_DEFAULTS_DIR CONFIG_DIR LOGS_DIR SPOOL_DIR wizard_smtp_password
     validate_preupgrade
     service_postupgrade
 ) >"${TEST_ROOT}/upgrade.out" 2>&1 || {
@@ -269,6 +272,37 @@ grep -q '^TestOnly-Smtp-Secret-42$' "${upgrade_var}/config/smtp-password" || fai
 if grep -q 'TestOnly-Smtp-Secret-42' "${TEST_ROOT}/upgrade.out"; then
     fail_test 'SMTP password leaked into upgrade output'
 fi
+
+mismatched_var_target="${TEST_ROOT}/mismatched-var-target"
+mismatched_var_expected="${TEST_ROOT}/mismatched-var-expected"
+mismatched_var_link="${TEST_ROOT}/mismatched-var-link"
+mkdir -p "${mismatched_var_target}" "${mismatched_var_expected}"
+ln -s "${mismatched_var_target}" "${mismatched_var_link}"
+if (
+    . "${SOURCE_SETUP}"
+    MAER_VAR_DIR="${mismatched_var_link}"
+    SYNOPKG_PKGVAR="${mismatched_var_expected}"
+    export MAER_VAR_DIR SYNOPKG_PKGVAR
+    validate_runtime_root
+) >"${TEST_ROOT}/mismatched-var.out" 2>&1
+then
+    fail_test 'package data link outside DSM package data was accepted'
+fi
+grep -q "does not match DSM's package data directory" "${TEST_ROOT}/mismatched-var.out" || fail_test 'mismatched package data link refusal is not explicit'
+
+broken_var_link="${TEST_ROOT}/broken-var-link"
+ln -s "${TEST_ROOT}/missing-var-target" "${broken_var_link}"
+if (
+    . "${SOURCE_SETUP}"
+    MAER_VAR_DIR="${broken_var_link}"
+    SYNOPKG_PKGVAR="${TEST_ROOT}/missing-var-target"
+    export MAER_VAR_DIR SYNOPKG_PKGVAR
+    validate_runtime_root
+) >"${TEST_ROOT}/broken-var.out" 2>&1
+then
+    fail_test 'broken package data link was accepted'
+fi
+grep -q 'package data directory is missing or unsafe' "${TEST_ROOT}/broken-var.out" || fail_test 'broken package data link refusal is not explicit'
 
 existing_secret_var="${TEST_ROOT}/existing-secret-var"
 mkdir -p "${existing_secret_var}/config"

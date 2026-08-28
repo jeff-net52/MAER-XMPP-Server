@@ -37,11 +37,49 @@ export EJABBERD_CONFIG_PATH EJABBERDCTL_CONFIG_PATH
 export EJABBERD_LOG_PATH EJABBERD_PID_PATH ERL_LIBS
 export ERLANG_NODE INET_DIST_INTERFACE ERL_EPMD_ADDRESS ERL_DIST_PORT
 
+validate_runtime_root()
+{
+    if [ ! -d "${MAER_VAR_DIR}" ]; then
+        echo "The package data directory is missing or unsafe." >&2
+        return 1
+    fi
+
+    resolved_runtime_root=$(realpath "${MAER_VAR_DIR}") || {
+        echo "Cannot resolve the package data directory safely." >&2
+        return 1
+    }
+    if [ ! -d "${resolved_runtime_root}" ] || [ -L "${resolved_runtime_root}" ]; then
+        echo "The resolved package data directory is unsafe." >&2
+        return 1
+    fi
+
+    # DSM 7 deliberately exposes the package data directory through
+    # /var/packages/<package>/var -> ${SYNOPKG_PKGVAR}.  Accept that one
+    # platform-managed link, but only when it resolves to the exact package
+    # data directory declared by DSM.  Every nested runtime path remains
+    # subject to the stricter no-symbolic-link policy below.
+    if [ -L "${MAER_VAR_DIR}" ]; then
+        if [ -z "${SYNOPKG_PKGVAR:-}" ] || [ ! -d "${SYNOPKG_PKGVAR}" ]; then
+            echo "DSM did not provide a valid package data directory." >&2
+            return 1
+        fi
+        resolved_synopkg_var=$(realpath "${SYNOPKG_PKGVAR}") || {
+            echo "Cannot resolve DSM's package data directory safely." >&2
+            return 1
+        }
+        if [ "${resolved_runtime_root}" != "${resolved_synopkg_var}" ]; then
+            echo "The package data link does not match DSM's package data directory." >&2
+            return 1
+        fi
+    fi
+}
+
 ensure_runtime_layout()
 {
     umask 077
+    validate_runtime_root || return 1
+    chmod 700 "${MAER_VAR_DIR}" || return 1
     for runtime_dir in \
-        "${MAER_VAR_DIR}" \
         "${CONFIG_DIR}" \
         "${MAER_VAR_DIR}/certs" \
         "${SPOOL_DIR}" \
@@ -234,7 +272,7 @@ validate_preupgrade()
         exit 1
     fi
 
-    if [ ! -d "${MAER_VAR_DIR}" ] || [ -L "${MAER_VAR_DIR}" ]; then
+    if ! validate_runtime_root; then
         echo "The installed package data directory is missing or unsafe; refusing upgrade." >&2
         exit 1
     fi

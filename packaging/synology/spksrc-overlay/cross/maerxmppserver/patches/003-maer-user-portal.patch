@@ -322,7 +322,7 @@ new file mode 100644
 index 00000000..d90b1a7b
 --- /dev/null
 +++ src/mod_maer_portal.erl
-@@ -0,0 +1,1514 @@
+@@ -0,0 +1,1766 @@
 +%%%----------------------------------------------------------------------
 +%%% MAER Chat self-service account portal.
 +%%%
@@ -339,10 +339,12 @@ index 00000000..d90b1a7b
 +-export([start/2, stop/1, reload/3, depends/2,
 +         mod_opt_type/1, mod_options/1, mod_doc/0]).
 +-export([process/2]).
++-export([password_changed/2, account_removed/2]).
 +-export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 +         terminate/2, code_change/3]).
 +
 +-include("ejabberd_http.hrl").
++-include("logger.hrl").
 +-include_lib("kernel/include/file.hrl").
 +
 +-define(HOST, <<"xmpp.maer.fr">>).
@@ -400,6 +402,8 @@ index 00000000..d90b1a7b
 +mod_opt_type(session_ttl) -> econf:pos_int();
 +mod_opt_type(session_idle_ttl) -> econf:pos_int();
 +mod_opt_type(login_attempts) -> econf:pos_int();
++mod_opt_type(preauth_tokens_per_ip) -> econf:pos_int();
++mod_opt_type(preauth_tokens_global) -> econf:pos_int();
 +mod_opt_type(account_actions_per_hour) -> econf:pos_int().
 +
 +mod_options(_Host) ->
@@ -416,6 +420,8 @@ index 00000000..d90b1a7b
 +     {session_ttl, 86400},
 +     {session_idle_ttl, 1800},
 +     {login_attempts, 8},
++     {preauth_tokens_per_ip, 16},
++     {preauth_tokens_global, 2048},
 +     {account_actions_per_hour, 3}].
 +
 +mod_doc() ->
@@ -464,20 +470,18 @@ index 00000000..d90b1a7b
 +            Preauth = ets:new(maer_portal_preauth, [set, private]),
 +            Rates = ets:new(maer_portal_rates, [set, private]),
 +            Ref = erlang:send_after(?CLEANUP_INTERVAL, self(), cleanup),
-+            {ok, #state{host = Host, opts = Opts, db = Db,
-+                        db_path = DbPath, sessions = Sessions,
-+                        preauth = Preauth, rates = Rates,
-+                        cleanup_ref = Ref}};
++            State = #state{host = Host, opts = Opts, db = Db,
++                           db_path = DbPath, sessions = Sessions,
++                           preauth = Preauth, rates = Rates,
++                           cleanup_ref = Ref},
++            register_account_hooks(Host),
++            {ok, State};
 +        {error, Reason} ->
 +            {stop, {portal_database_unavailable, Reason}}
 +    end.
 +
 +handle_call({new_preauth, IP}, _From, State) ->
-+    Token = random_token(),
-+    Hash = token_hash(Token),
-+    Expires = now_seconds() + ?PREAUTH_TTL,
-+    true = ets:insert(State#state.preauth, {Hash, IP, Expires}),
-+    {reply, {ok, Token}, State};
++    {reply, allocate_preauth(IP, State), State};
 +handle_call({login, IP, User0, Password, CsrfHash}, _From, State) ->
 +    Reply = login(IP, User0, Password, CsrfHash, State),
 +    {reply, Reply, State};
@@ -524,6 +528,10 @@ index 00000000..d90b1a7b
 +                  change_password(User, Token, Password, Confirmation, State)
 +              end),
 +    {reply, Reply, State};
++handle_call({password_changed, User}, _From, State) ->
++    {reply, invalidate_password_state(User, State), State};
++handle_call({account_removed, User}, _From, State) ->
++    {reply, purge_account_state(User, State), State};
 +handle_call(_Request, _From, State) ->
 +    {reply, {error, unexpected_request}, State}.
 +
@@ -546,13 +554,57 @@ index 00000000..d90b1a7b
 +handle_info(_Message, State) ->
 +    {noreply, State}.
 +
-+terminate(_Reason, #state{db = Db, cleanup_ref = Ref}) ->
++terminate(_Reason, #state{host = Host, db = Db, cleanup_ref = Ref}) ->
++    unregister_account_hooks(Host),
 +    erlang:cancel_timer(Ref),
 +    catch sqlite3:close(Db),
 +    ok.
 +
 +code_change(_OldVersion, State, _Extra) ->
 +    {ok, State}.
++
++%%%===================================================================
++%%% Account lifecycle hooks
++%%%===================================================================
++
++register_account_hooks(Host) ->
++    ejabberd_hooks:add(set_password, Host, ?MODULE, password_changed, 45),
++    ejabberd_hooks:add(remove_user, Host, ?MODULE, account_removed, 45).
++
++unregister_account_hooks(Host) ->
++    ejabberd_hooks:delete(set_password, Host, ?MODULE, password_changed, 45),
++    ejabberd_hooks:delete(remove_user, Host, ?MODULE, account_removed, 45).
++
++password_changed(User, ?HOST = Host) when is_binary(User) ->
++    call_account_hook(Host, {password_changed, User}),
++    ok;
++password_changed(_, _) ->
++    ok.
++
++account_removed(User, ?HOST = Host) when is_binary(User) ->
++    call_account_hook(Host, {account_removed, User}),
++    ok;
++account_removed(_, _) ->
++    ok.
++
++call_account_hook(Host, Message) ->
++    try
++        case gen_mod:is_loaded(Host, ?MODULE) of
++            true ->
++                Proc = gen_mod:get_module_proc(Host, ?MODULE),
++                case whereis(Proc) of
++                    Pid when Pid =:= self() -> ok;
++                    undefined -> ok;
++                    _Pid -> gen_server:call(Proc, Message, 10000)
++                end;
++            false ->
++                ok
++        end
++    catch Class:_Reason ->
++        ?WARNING_MSG("MAER portal account-hook delivery failed on ~ts (~p)",
++                     [Host, Class]),
++        ok
++    end.
 +
 +%%%===================================================================
 +%%% HTTP request handler
@@ -701,6 +753,7 @@ index 00000000..d90b1a7b
 +    case call_host(Host, {new_preauth, IP}) of
 +        {ok, Csrf} ->
 +            html_response(200, [], verify_email_page(Csrf));
++        {error, rate_limited} -> preauth_rate_limited();
 +        _ -> unavailable()
 +    end.
 +
@@ -865,6 +918,28 @@ index 00000000..d90b1a7b
 +        [] -> {error, auth}
 +    end.
 +
++allocate_preauth(IP, State) ->
++    Now = now_seconds(),
++    cleanup_expired_preauth(State#state.preauth, Now),
++    PerIPLimit = maps:get(preauth_tokens_per_ip, State#state.opts, 16),
++    GlobalLimit = maps:get(preauth_tokens_global, State#state.opts, 2048),
++    GlobalCount = ets:info(State#state.preauth, size),
++    PerIPCount = ets:foldl(
++                   fun({_Hash, EntryIP, Expires}, Count)
++                         when EntryIP =:= IP, Expires > Now -> Count + 1;
++                      (_, Count) -> Count
++                   end, 0, State#state.preauth),
++    case GlobalCount < GlobalLimit andalso PerIPCount < PerIPLimit of
++        true ->
++            Token = random_token(),
++            Hash = token_hash(Token),
++            true = ets:insert(State#state.preauth,
++                              {Hash, IP, Now + ?PREAUTH_TTL}),
++            {ok, Token};
++        false ->
++            {error, rate_limited}
++    end.
++
 +consume_preauth(Hash, IP, State) ->
 +    Now = now_seconds(),
 +    case ets:take(State#state.preauth, Hash) of
@@ -892,10 +967,14 @@ index 00000000..d90b1a7b
 +                 seen_at = '$1', expires_at = '$2'},
 +        [{'orelse', {'=<', '$2', Now}, {'=<', {'+', '$1', IdleTTL}, Now}}],
 +        [true]}]),
-+    ets:select_delete(State#state.preauth,
-+                      [{{'_', '_', '$1'}, [{'=<' , '$1', Now}], [true]}]),
++    cleanup_expired_preauth(State#state.preauth, Now),
 +    ets:select_delete(State#state.rates,
 +                      [{{'_', '$1', '_'}, [{'=<' , '$1', Now - 7200}], [true]}]),
++    ok.
++
++cleanup_expired_preauth(Table, Now) ->
++    ets:select_delete(Table,
++                      [{{'_', '_', '$1'}, [{'=<' , '$1', Now}], [true]}]),
 +    ok.
 +
 +%%%===================================================================
@@ -1056,16 +1135,18 @@ index 00000000..d90b1a7b
 +            Hash = token_hash(Token),
 +            case find_token(Hash, <<"password_change">>, State) of
 +                {ok, User, _} ->
-+                    case safe_set_password(User, Password) of
++                    %% Invalidate every pre-existing portal capability before
++                    %% changing the ejabberd credential.  The set_password hook
++                    %% runs in this same gen_server for portal-initiated changes,
++                    %% so it deliberately avoids a recursive call below.
++                    case invalidate_password_state(User, State) of
 +                        ok ->
-+                            _ = db_exec(State#state.db,
-+                                        <<"DELETE FROM portal_tokens WHERE "
-+                                          "username = ? AND purpose = "
-+                                          "'password_change'">>, [User]),
-+                            revoke_user_sessions(User, State),
-+                            secure_db_files(State#state.db_path),
-+                            ok;
-+                        _ -> {error, unavailable}
++                            case safe_set_password(User, Password) of
++                                ok -> ok;
++                                _ -> {error, unavailable}
++                            end;
++                        _ ->
++                            {error, unavailable}
 +                    end;
 +                _ -> {error, invalid_token}
 +            end
@@ -1084,6 +1165,48 @@ index 00000000..d90b1a7b
 +      [{#session{hash = '_', user = User, csrf_token = '_', csrf_hash = '_',
 +                 created_at = '_',
 +                 seen_at = '_', expires_at = '_'}, [], [true]}]),
++    ok.
++
++invalidate_password_state(User, State) when is_binary(User) ->
++    revoke_user_sessions(User, State),
++    Result = transaction(
++               State#state.db,
++               fun() ->
++                   ok = db_exec(State#state.db,
++                                <<"DELETE FROM portal_tokens WHERE username = ?">>,
++                                [User]),
++                   db_exec(State#state.db,
++                           <<"UPDATE portal_profiles SET pending_email = NULL, "
++                             "updated_at = ? WHERE username = ?">>,
++                           [now_seconds(), User])
++               end),
++    secure_db_files(State#state.db_path),
++    Result;
++invalidate_password_state(_, _) ->
++    {error, invalid_user}.
++
++purge_account_state(User, State) when is_binary(User) ->
++    revoke_user_sessions(User, State),
++    purge_user_rate_limits(User, State),
++    Result = transaction(
++               State#state.db,
++               fun() ->
++                   ok = db_exec(State#state.db,
++                                <<"DELETE FROM portal_tokens WHERE username = ?">>,
++                                [User]),
++                   db_exec(State#state.db,
++                           <<"DELETE FROM portal_profiles WHERE username = ?">>,
++                           [User])
++               end),
++    secure_db_files(State#state.db_path),
++    Result;
++purge_account_state(_, _) ->
++    {error, invalid_user}.
++
++purge_user_rate_limits(User, State) ->
++    ets:match_delete(State#state.rates, {{login, '_', User}, '_', '_'}),
++    ets:match_delete(State#state.rates, {{email, User}, '_', '_'}),
++    ets:match_delete(State#state.rates, {{password_mail, User}, '_', '_'}),
 +    ok.
 +
 +compensate_token(Hash, User, Purpose, State) ->
@@ -1456,6 +1579,11 @@ index 00000000..d90b1a7b
 +                  message_page(<<"Trop de demandes">>,
 +                               <<"Réessayez dans quelques instants.">>)).
 +
++preauth_rate_limited() ->
++    html_response(429, [{<<"Retry-After">>, integer_to_binary(?PREAUTH_TTL)}],
++                  message_page(<<"Trop de pages ouvertes">>,
++                    <<"Fermez les anciens onglets ou réessayez dans quelques minutes.">>)).
++
 +session_expired() ->
 +    html_response(401, clear_cookies(),
 +                  message_page(<<"Session expirée">>,
@@ -1473,6 +1601,7 @@ index 00000000..d90b1a7b
 +    case call_host(Host, {new_preauth, IP}) of
 +        {ok, Csrf} ->
 +            html_response(Status, [], login_page(Csrf, Message));
++        {error, rate_limited} -> preauth_rate_limited();
 +        _ -> unavailable()
 +    end.
 +
@@ -1835,6 +1964,129 @@ index 00000000..d90b1a7b
 +    ets:insert(Preauth, {Hash, IP, now_seconds() + 60}),
 +    ?assert(consume_preauth(Hash, IP, State)),
 +    ?assertNot(consume_preauth(Hash, IP, State)).
++
++preauth_quota_and_expiry_test() ->
++    Preauth = ets:new(test_preauth_quota, [set, private]),
++    State = #state{preauth = Preauth,
++                   opts = #{preauth_tokens_per_ip => 2,
++                            preauth_tokens_global => 3}},
++    IP1 = {192, 0, 2, 20},
++    IP2 = {192, 0, 2, 21},
++    {ok, Token1} = allocate_preauth(IP1, State),
++    ?assertMatch({ok, _}, allocate_preauth(IP1, State)),
++    ?assertEqual({error, rate_limited}, allocate_preauth(IP1, State)),
++    ?assertMatch({ok, _}, allocate_preauth(IP2, State)),
++    ?assertEqual({error, rate_limited}, allocate_preauth(IP2, State)),
++
++    Hash1 = token_hash(Token1),
++    [{Hash1, IP1, _}] = ets:lookup(Preauth, Hash1),
++    true = ets:insert(Preauth, {Hash1, IP1, now_seconds() - 1}),
++    ?assertMatch({ok, _}, allocate_preauth(IP2, State)),
++    ?assertEqual([], ets:lookup(Preauth, Hash1)),
++    ?assertEqual(3, ets:info(Preauth, size)),
++    {429, Headers, _Body} = preauth_rate_limited(),
++    ?assertEqual({<<"Retry-After">>, integer_to_binary(?PREAUTH_TTL)},
++                 lists:keyfind(<<"Retry-After">>, 1, Headers)).
++
++password_change_revokes_sessions_and_tokens_test() ->
++    with_portal_test_state(
++      fun(State) ->
++          User = <<"alice">>,
++          ok = ensure_profile(User, State),
++          ok = db_exec(State#state.db,
++                       <<"UPDATE portal_profiles SET email = ?, "
++                         "pending_email = ?, email_verified = 1, audio = 1 "
++                         "WHERE username = ?">>,
++                       [<<"owner@example.org">>, <<"new@example.org">>, User]),
++          Token = random_token(),
++          ok = db_exec(State#state.db,
++                       <<"INSERT INTO portal_tokens "
++                         "(token_hash, username, purpose, value, expires_at, created_at) "
++                         "VALUES (?, ?, 'email_verify', ?, ?, ?)">>,
++                       [token_hash(Token), User, <<"new@example.org">>,
++                        now_seconds() + 60, now_seconds()]),
++          {ok, SessionToken} = create_session(User, State),
++          SessionHash = token_hash(SessionToken),
++
++          ?assertEqual(ok, invalidate_password_state(User, State)),
++          ?assertEqual({error, auth},
++                       lookup_session(SessionHash, false, State)),
++          ?assertEqual([], db_rows(State#state.db,
++                                  <<"SELECT token_hash FROM portal_tokens "
++                                    "WHERE username = ?">>, [User])),
++          {ok, Profile} = get_profile(User, State),
++          ?assertEqual(<<"owner@example.org">>, maps:get(email, Profile)),
++          ?assertEqual(undefined, maps:get(pending_email, Profile)),
++          ?assertEqual(true, maps:get(email_verified, Profile)),
++          ?assertEqual(true, maps:get(audio, Profile))
++      end).
++
++account_deletion_then_recreation_is_clean_test() ->
++    with_portal_test_state(
++      fun(State) ->
++          User = <<"reused-name">>,
++          ok = ensure_profile(User, State),
++          ok = db_exec(State#state.db,
++                       <<"UPDATE portal_profiles SET email = ?, "
++                         "email_verified = 1, video = 1, assistance = 1 "
++                         "WHERE username = ?">>,
++                       [<<"former-owner@example.org">>, User]),
++          Token = random_token(),
++          ok = db_exec(State#state.db,
++                       <<"INSERT INTO portal_tokens "
++                         "(token_hash, username, purpose, value, expires_at, created_at) "
++                         "VALUES (?, ?, 'password_change', NULL, ?, ?)">>,
++                       [token_hash(Token), User,
++                        now_seconds() + 60, now_seconds()]),
++          {ok, SessionToken} = create_session(User, State),
++          SessionHash = token_hash(SessionToken),
++          true = ets:insert(State#state.rates,
++                            {{email, User}, now_seconds(), 1}),
++          true = ets:insert(State#state.rates,
++                            {{password_mail, User}, now_seconds(), 1}),
++
++          ?assertEqual(ok, purge_account_state(User, State)),
++          ?assertEqual({error, auth},
++                       lookup_session(SessionHash, false, State)),
++          ?assertEqual([], db_rows(State#state.db,
++                                  <<"SELECT username FROM portal_profiles "
++                                    "WHERE username = ?">>, [User])),
++          ?assertEqual([], db_rows(State#state.db,
++                                  <<"SELECT token_hash FROM portal_tokens "
++                                    "WHERE username = ?">>, [User])),
++          ?assertEqual([], ets:lookup(State#state.rates, {email, User})),
++          ?assertEqual([], ets:lookup(State#state.rates,
++                                     {password_mail, User})),
++
++          %% A later ejabberd account with the same localpart starts with a
++          %% genuinely new portal identity and cannot inherit the former
++          %% owner's verified address, entitlements, sessions or tokens.
++          {ok, Fresh} = get_profile(User, State),
++          ?assertEqual(undefined, maps:get(email, Fresh)),
++          ?assertEqual(false, maps:get(email_verified, Fresh)),
++          ?assertEqual(false, maps:get(video, Fresh)),
++          ?assertEqual(false, maps:get(assistance, Fresh))
++      end).
++
++with_portal_test_state(Fun) ->
++    {ok, _} = application:ensure_all_started(sqlite3),
++    Dir = filename:join("/tmp", "maer-portal-lifecycle-" ++
++                        integer_to_list(erlang:unique_integer([positive]))),
++    ok = file:make_dir(Dir),
++    Path = list_to_binary(filename:join(Dir, "portal.sqlite")),
++    {ok, Db} = open_database(Path),
++    Sessions = ets:new(test_portal_lifecycle_sessions,
++                       [set, private, {keypos, #session.hash}]),
++    Preauth = ets:new(test_portal_lifecycle_preauth, [set, private]),
++    Rates = ets:new(test_portal_lifecycle_rates, [set, private]),
++    State = #state{opts = maps:from_list(mod_options(?HOST)), db = Db,
++                   db_path = Path, sessions = Sessions,
++                   preauth = Preauth, rates = Rates},
++    try Fun(State)
++    after
++        _ = sqlite3:close(Db),
++        _ = file:del_dir_r(Dir)
++    end.
 +
 +-endif.
 diff --git priv/maer_portal/portal.css priv/maer_portal/portal.css
